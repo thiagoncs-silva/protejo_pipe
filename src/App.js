@@ -1,4 +1,3 @@
-/* eslint-disable */
 import { useState, useEffect, useRef } from "react";
 
 // ─── SUPABASE CONFIG ──────────────────────────────────────────────────────────
@@ -6040,6 +6039,12 @@ function SuperAdminPanel({ currentUser }) {
 
 export default function App() {
   const [page,setPage]=useState("dashboard");
+  const [notif,setNotif]=useState(null);
+  const [open,setOpen]=useState(true);
+  const [user,setUser]=useState(null);
+  const [profile,setProfile]=useState(DEFAULT_PROFILE);
+  const [ownerWebhook,setOwnerWebhook]=useState("https://seu-n8n.app.n8n.cloud/webhook/pipe-tm");
+
   const [leads,setLeads]=useState([]);
   const [sbLoading,setSbLoading]=useState(true);
   const [sbError,setSbError]=useState("");
@@ -6093,8 +6098,8 @@ export default function App() {
             headers:{"Content-Type":"application/json"},
             body:JSON.stringify({
               pending_count: pending.length,
-              user_email: user?.email,
-              leads: pending.slice(0,5).map(p=>({name:p.lead.name, step:p.step.tema, canal:p.step.canal}))
+              user_email: user?.email||"",
+              leads: pending.slice(0,5).map(p=>({name:p.lead.name,step:p.step.tema,canal:p.step.canal}))
             }),
             mode:"no-cors"
           }).catch(()=>{});
@@ -6102,13 +6107,6 @@ export default function App() {
       }
     }
   },[leads]);
-
-
-  const [notif,setNotif]=useState(null);
-  const [open,setOpen]=useState(true);
-  const [user,setUser]=useState(null);
-  const [profile,setProfile]=useState(DEFAULT_PROFILE);
-  const [ownerWebhook,setOwnerWebhook]=useState("https://seu-n8n.app.n8n.cloud/webhook/pipe-tm");
 
   // Permission check - owner always has access to everything
   const hasAccess = (mod) => {
