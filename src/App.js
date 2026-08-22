@@ -6048,6 +6048,9 @@ export default function App() {
   const [leads,setLeads]=useState([]);
   const [sbLoading,setSbLoading]=useState(true);
   const [sbError,setSbError]=useState("");
+  const [pwaPrompt, setPwaPrompt] = useState(null);
+  const [pwaInstalled, setPwaInstalled] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   // Load from Supabase on mount
   useEffect(()=>{
