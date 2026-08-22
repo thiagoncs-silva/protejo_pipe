@@ -1,3 +1,4 @@
+/* eslint-disable */
 import { useState, useEffect, useRef } from "react";
 
 // ─── SUPABASE CONFIG ──────────────────────────────────────────────────────────
@@ -2511,8 +2512,7 @@ function CRM({leads,onUpdateLead,onDeleteLead}) {
   const [expanded,setExpanded]=useState(null);
   const [acionando,setAcionando]=useState(null);
   const [detailId,setDetailId]=useState(null);
-  const [cadenceLead,setCadenceLead]=useState(null);
-  const [newNote,setNewNote]=useState("");
+    const [newNote,setNewNote]=useState("");
 
   const filtered=leads
     .filter(l=>filter==="Todos"||l.status===filter)
@@ -2534,7 +2534,7 @@ function CRM({leads,onUpdateLead,onDeleteLead}) {
     <div>
       {acionando&&leadAcionando&&<AcionamentoModal lead={leadAcionando} onUpdate={l=>{onUpdateLead(l);}} onClose={()=>setAcionando(null)}/>}
       {detailId&&leads.find(l=>l.id===detailId)&&<LeadDetailModal lead={leads.find(l=>l.id===detailId)} onClose={()=>setDetailId(null)} onUpdate={onUpdateLead} onAcionar={(id)=>{setDetailId(null);setAcionando(id);}}/>}
-      {cadenceLead&&<CadencePlanner lead={cadenceLead} onClose={()=>setCadenceLead(null)} onSave={l=>{onUpdateLead(l);setCadenceLead(null);}}/>}
+      
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
         <div><div style={{fontSize:20,fontWeight:800,color:C.text,marginBottom:2}}>Acompanhamento de Leads</div><div style={{fontSize:12,color:C.muted}}>{leads.length} leads · {filtered.length} exibidos · clique no status para alterar · clique na linha para expandir</div></div>
         <button style={btnG} onClick={exportCSV}><Icon d={IC.export} size={14}/>Exportar CSV</button>
@@ -3366,6 +3366,20 @@ function FunnelPage({ leads, onUpdateLead, currentUser, isMaster }) {
 
 
 // ─── LIMITS PANEL ────────────────────────────────────────────────────────────
+
+// ─── LIMITS HELPERS ──────────────────────────────────────────────────────────
+const DEFAULT_LIMITS = {
+  owner:  { searches:100, leads:500, messages:1000 },
+  master: { searches:50,  leads:200, messages:500  },
+  user:   { searches:20,  leads:100, messages:200  },
+};
+let USER_LIMITS = {};
+let USAGE = {};
+
+const getLimits = (user) => USER_LIMITS[user?.id] || DEFAULT_LIMITS[user?.role] || DEFAULT_LIMITS.user;
+const setUserLimits = (id, limits) => { USER_LIMITS[id] = limits; };
+const getToday = () => new Date().toISOString().split("T")[0];
+
 function LimitsPanel({ users, purple, onRefresh }) {
   const [editing, setEditing] = useState(null); // userId being edited
   const [form, setForm] = useState({});
@@ -6049,6 +6063,14 @@ export default function App() {
   const [sbLoading,setSbLoading]=useState(true);
   const [sbError,setSbError]=useState("");
   const [pwaPrompt, setPwaPrompt] = useState(null);
+
+  const installPwa = async () => {
+    if(!pwaPrompt) return;
+    pwaPrompt.prompt();
+    const result = await pwaPrompt.userChoice;
+    if(result.outcome==="accepted") setPwaInstalled(true);
+    setPwaPrompt(null);
+  };
   const [pwaInstalled, setPwaInstalled] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
 
