@@ -65,7 +65,7 @@ const sbFetch = async (path, method="GET", body=null) => {
 };
 
 // ── Supabase helpers ──────────────────────────────────────────────────────────
-const sbGetLeads = (tenantId) => sbFetch("leads?select=*&order=created_at.desc"+(tenantId?"&tenant_id=eq."+tenantId:""));
+const sbGetLeads = (tenantId, module=null) => sbFetch("leads?select=*&order=created_at.desc"+(tenantId?"&tenant_id=eq."+tenantId:"")+(module?"&module=eq."+module:""));
 const sbInsertLead = (lead) => sbFetch("leads", "POST", lead);
 const sbUpdateLead = (id, patch) => sbFetch("leads?id=eq."+id, "PATCH", patch);
 const sbDeleteLead = (id) => sbFetch("leads?id=eq."+id, "DELETE");
@@ -100,6 +100,13 @@ const dbToLead = (r) => ({
   business_hours: r.business_hours||"",
   cadence: [],
   createdAt: r.created_at,
+  // Módulo e pós-venda
+  module: r.module||"prospeccao",
+  pos_venda_id: r.pos_venda_id||null,
+  responsible: r.responsible||"",
+  next_contact: r.next_contact||"",
+  last_contact_at: r.last_contact_at||"",
+  health_score: r.health_score||0,
 });
 
 // Convert app lead to DB format
@@ -631,7 +638,7 @@ const sbAuth = {
 
 // Keep USER_DB as fallback for offline/demo mode
 const USER_DB = [
-  { id:"owner",  name:"Owner",  email:"owner@pipetm.com.br",  password:"owner2024",  role:"owner",  status:"ativo", createdAt:"2026-01-01", lastLogin:null, perms:ALL_MODULES },
+  { id:"owner", name:"Owner",  email:"owner@pipetm.com.br",  password:"owner2024",  role:"owner",  status:"ativo", createdAt:"2026-01-01", lastLogin:null, perms:ALL_MODULES },
   { id:"master", name:"Master", email:"master@pipetm.com.br", password:"master2024", role:"master", status:"ativo", createdAt:"2026-01-01", lastLogin:null, perms:DEFAULT_MASTER_PERMS },
   { id:"admin1", name:"Admin",  email:"admin@pipetm.com.br",  password:"opme2024",   role:"user",   status:"ativo", createdAt:"2026-01-01", lastLogin:null, perms:DEFAULT_USER_PERMS },
 ];
@@ -1563,13 +1570,16 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
   const [modTab, setModTab] = useState("todos"); // todos | prospeccao | receptivo | pos_venda
 
   // Filter leads by module tab
-  const filteredLeads = modTab==="todos" ? leads
-    : modTab==="prospeccao" ? leads.filter(l=>!l.module||l.module==="prospeccao")
-    : leads.filter(l=>l.module===modTab);
-
+  // Filtros por módulo
   const proLeads  = leads.filter(l=>!l.module||l.module==="prospeccao");
   const recLeads  = leads.filter(l=>l.module==="receptivo");
   const posLeads  = leads.filter(l=>l.module==="pos_venda");
+
+  const filteredLeads = modTab==="todos"      ? leads
+    : modTab==="prospeccao"                   ? proLeads
+    : modTab==="receptivo"                    ? recLeads
+    : modTab==="pos_venda"                    ? posLeads
+    : leads;
 
   const fl = filteredLeads;
   const total=fl.length;
@@ -1578,17 +1588,28 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
   const novos=fl.filter(l=>["Novo cliente","Novo contato"].includes(l.status)).length;
   const taxa=total?Math.round((conv/total)*100):0;
 
+  // Funil adaptado por módulo
+  const POS_VENDA_STAGES = [
+    {label:"Aguardando",    c:"#6B7280"},
+    {label:"Enviado",       c:"#3B82F6"},
+    {label:"Respondeu",     c:"#8B5CF6"},
+    {label:"Em conversa",   c:"#F59E0B"},
+    {label:"Agendou reunião",c:"#4ADE80"},
+    {label:"Sem resposta",  c:"#F87171"},
+  ];
   const STAGE_ORDER=["Novo cliente","Conversando","Relacionamento","Reunião agendada","Montar orçamento","Não compareceu","Proposta enviada","Contratou"];
   const stageIdx=(name)=>STAGE_ORDER.indexOf(name);
   const reachedStage=(name)=>fl.filter(l=>stageIdx(l.status)>=stageIdx(name)).length;
-  const FUNIL_VISIBLE=[
-    {label:"Novo cliente",v:reachedStage("Novo cliente"),c:"#3B82F6"},
-    {label:"Conversando",v:reachedStage("Conversando"),c:"#8B5CF6"},
-    {label:"Relacionamento",v:reachedStage("Relacionamento"),c:"#10B981"},
-    {label:"Reunião agendada",v:reachedStage("Reunião agendada"),c:"#F59E0B"},
-    {label:"Proposta enviada",v:reachedStage("Proposta enviada"),c:"#6366F1"},
-    {label:"Contratou",v:reachedStage("Contratou"),c:"#4ADE80"},
-  ];
+  const FUNIL_VISIBLE = modTab==="pos_venda"
+    ? POS_VENDA_STAGES.map(s=>({label:s.label,v:fl.filter(l=>l.status===s.label).length,c:s.c}))
+    : [
+        {label:"Novo cliente",v:reachedStage("Novo cliente"),c:"#3B82F6"},
+        {label:"Conversando",v:reachedStage("Conversando"),c:"#8B5CF6"},
+        {label:"Relacionamento",v:reachedStage("Relacionamento"),c:"#10B981"},
+        {label:"Reunião agendada",v:reachedStage("Reunião agendada"),c:"#F59E0B"},
+        {label:"Proposta enviada",v:reachedStage("Proposta enviada"),c:"#6366F1"},
+        {label:"Contratou",v:reachedStage("Contratou"),c:"#4ADE80"},
+      ];
   const maxF=Math.max(...FUNIL_VISIBLE.map(f=>f.v),1);
 
   const todayLeads=filterLeadsByPeriod(fl,"dia");
@@ -1701,7 +1722,7 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
         {/* Funil */}
         <div style={card({marginTop:4})}>
           <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:16}}>
-            {modTab==="todos"?"Funil Geral":modTab==="receptivo"?"Funil Receptivo":modTab==="pos_venda"?"Funil Pós-venda":"Funil Prospecção"}
+            {modTab==="todos"?"Funil Geral":modTab==="receptivo"?"Funil Receptivo":modTab==="pos_venda"?"Pós-venda por Status":"Funil Prospecção"}
           </div>
           {FUNIL_VISIBLE.map((f,i)=>{
             const pct=maxF>0?Math.round((f.v/maxF)*100):0;
@@ -1954,7 +1975,7 @@ function SearchLeads({onLeadsFound, existingLeads=[], profile={}, currentUser=nu
         )}
         {mode==="n8n"&&!webhookUrl&&(
           <div style={{marginTop:12,padding:"8px 12px",background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.2)",borderRadius:6,fontSize:11,color:"#F59E0B"}}>
-            ⚠️ Configure o Webhook do N8N no Painel Owner para usar o Google Places.
+            ⚠️ Webhook de busca não configurado. O administrador deve configurá-lo em Super Admin → Webhooks N8N.
           </div>
         )}
       </div>
@@ -3286,7 +3307,6 @@ function FunnelPage({ leads, onUpdateLead, currentUser, isMaster }) {
           <div style={{fontSize:18,fontWeight:800,color:C.text}}>🏆 Funil de Vendas</div>
           <div style={{fontSize:12,color:C.muted,marginTop:2}}>Acompanhe seus leads e acionamentos pendentes</div>
         </div>
-        {isMaster&&<div style={{fontSize:11,color:C.accent,background:(C.accent+"18"),padding:"4px 10px",borderRadius:20,fontWeight:700}}>⚙️ Configurar funil no Painel Owner</div>}
       </div>
 
       {/* KPIs */}
@@ -3877,7 +3897,7 @@ function Cadencias({ leads, currentUser, onUpdateLead }) {
                 </div>
                 {editing.auto&&(
                   <div style={{marginTop:8,padding:"10px 14px",background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.2)",borderRadius:8,fontSize:11,color:"#F59E0B"}}>
-                    ⚠️ O N8N precisa estar configurado com o webhook do Pipe.TM para executar automaticamente. Configure em Painel Owner → Webhook N8N.
+                    ⚠️ O N8N precisa estar configurado com o webhook do Pipe.TM para executar automaticamente. Configure em Super Admin → Webhooks N8N.
                   </div>
                 )}
               </div>
@@ -5540,41 +5560,86 @@ function Suporte({ leads, onUpdateLead, currentUser }) {
 
 // ─── MÓDULO PÓS-VENDA ────────────────────────────────────────────────────────
 function PosVenda({ currentUser }) {
+  const [tab, setTab]           = useState("clientes"); // clientes | agenda
   const [clientes, setClientes] = useState([]);
+  const [agendamentos, setAgendamentos] = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState("");
   const [sel,      setSel]      = useState(null);
   const [filtro,   setFiltro]   = useState("todos");
   const [busca,    setBusca]    = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const [saving,   setSaving]   = useState(false);
+  const [form, setForm] = useState({
+    nome:"", cpf_cnpj:"", telefone:"", data_relacionamento:"",
+    data_agendamento:"", vendedor:"",
+  });
+  const [lote, setLote] = useState([]); // múltiplos contatos
 
   const tenantId = currentUser?.tenant_id || "072b33d2-46ff-4bf2-839b-ee5d33fe6cb7";
+  const f = (k,v) => setForm(p=>({...p,[k]:v}));
 
   const loadClientes = async () => {
     setLoading(true);
     try {
-      const rows = await sbFetch(
-        "pos_venda?select=*&tenant_id=eq."+tenantId+"&order=created_at.desc"
-      );
+      const rows = await sbFetch("pos_venda?select=*&tenant_id=eq."+tenantId+"&order=created_at.desc");
       setClientes(Array.isArray(rows)?rows:[]);
       setError("");
     } catch(e) {
       setError("Erro ao carregar: "+e.message);
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
-  useEffect(()=>{ loadClientes(); },[]);
-
-  const updateStatus = async (id, status) => {
+  const loadAgendamentos = async () => {
     try {
-      await sbFetch("pos_venda?id=eq."+id, "PATCH", {status_envio: status});
-      setClientes(cs=>cs.map(c=>c.id===id?{...c,status_envio:status}:c));
-      if(sel?.id===id) setSel(s=>({...s,status_envio:status}));
-    } catch(e) { setError(e.message); }
+      const rows = await sbFetch("pos_venda_agenda?select=*&tenant_id=eq."+tenantId+"&order=data_agendamento.asc");
+      setAgendamentos(Array.isArray(rows)?rows:[]);
+    } catch(e) { console.warn(e); }
   };
 
-  // Filters
+  useEffect(()=>{
+    loadClientes();
+    loadAgendamentos();
+  },[]);
+
+  const addToLote = () => {
+    if(!form.nome||!form.telefone){ setError("Nome e telefone são obrigatórios."); return; }
+    setLote(l=>[...l,{...form,id:Date.now()}]);
+    setForm({nome:"",cpf_cnpj:"",telefone:"",data_relacionamento:"",data_agendamento:form.data_agendamento,vendedor:form.vendedor});
+    setError("");
+  };
+
+  const removeFromLote = (id) => setLote(l=>l.filter(x=>x.id!==id));
+
+  const salvarAgendamentos = async () => {
+    const lista = lote.length>0 ? lote : (form.nome&&form.telefone?[form]:[]);
+    if(lista.length===0){ setError("Adicione ao menos um contato."); return; }
+    if(!lista[0].data_agendamento){ setError("Data/hora do acionamento é obrigatória."); return; }
+    setSaving(true); setError("");
+    try {
+      for(const item of lista){
+        await sbFetch("pos_venda_agenda", "POST", {
+          nome: item.nome,
+          cpf_cnpj: item.cpf_cnpj||null,
+          telefone: item.telefone,
+          data_relacionamento: item.data_relacionamento||null,
+          data_agendamento: item.data_agendamento,
+          vendedor: item.vendedor||null,
+          tenant_id: tenantId,
+          user_id: currentUser?.id||null,
+          status: "pendente",
+        });
+      }
+      setLote([]);
+      setForm({nome:"",cpf_cnpj:"",telefone:"",data_relacionamento:"",data_agendamento:"",vendedor:""});
+      setShowForm(false);
+      loadAgendamentos();
+    } catch(e){
+      setError("Erro ao salvar: "+e.message);
+    } finally { setSaving(false); }
+  };
+
+  // Filters for clientes tab
   const filtered = clientes.filter(c=>{
     const matchFiltro = filtro==="todos" ? true
       : filtro==="aguardando"  ? c.status_envio==="Aguardando"
@@ -5589,29 +5654,45 @@ function PosVenda({ currentUser }) {
     return matchFiltro && matchBusca;
   });
 
-  // KPIs
-  const total     = clientes.length;
-  const enviados  = clientes.filter(c=>c.status_envio!=="Aguardando").length;
-  const respondeu = clientes.filter(c=>["Respondeu","Em conversa","Finalizado"].includes(c.status_envio)).length;
+  const STATUS_COLORS = {
+    "Aguardando":   "#6B7280",
+    "Enviado":      "#3B82F6",
+    "Respondeu":    "#8B5CF6",
+    "Em conversa":  "#F59E0B",
+    "Finalizado":   "#4ADE80",
+    "Sem resposta": "#F87171",
+  };
+
+  const AGENDA_STATUS_COLORS = {
+    "pendente":    "#F59E0B",
+    "processado":  "#4ADE80",
+    "erro":        "#F87171",
+  };
+
+  const total      = clientes.length;
+  const enviados   = clientes.filter(c=>c.status_envio!=="Aguardando").length;
+  const respondeu  = clientes.filter(c=>["Respondeu","Em conversa","Finalizado"].includes(c.status_envio)).length;
   const aguardando = clientes.filter(c=>c.status_envio==="Aguardando").length;
   const txResposta = enviados>0?Math.round((respondeu/enviados)*100):0;
 
-  const STATUS_COLORS = {
-    "Aguardando":  "#6B7280",
-    "Enviado":     "#3B82F6",
-    "Respondeu":   "#8B5CF6",
-    "Em conversa": "#F59E0B",
-    "Finalizado":  "#4ADE80",
-    "Sem resposta":"#F87171",
-  };
+  const agPendentes   = agendamentos.filter(a=>a.status==="pendente").length;
+  const agProcessados = agendamentos.filter(a=>a.status==="processado").length;
 
   const FILTROS = [
-    {id:"todos",       label:"Todos",        count:total},
-    {id:"aguardando",  label:"Aguardando",   count:aguardando},
-    {id:"enviado",     label:"Enviados",     count:clientes.filter(c=>c.status_envio==="Enviado").length},
-    {id:"respondeu",   label:"Responderam",  count:respondeu},
-    {id:"sem_resposta",label:"Sem resposta", count:clientes.filter(c=>c.status_envio==="Sem resposta").length},
+    {id:"todos",        label:"Todos",       count:total},
+    {id:"aguardando",   label:"Aguardando",  count:aguardando},
+    {id:"enviado",      label:"Enviados",    count:clientes.filter(c=>c.status_envio==="Enviado").length},
+    {id:"respondeu",    label:"Responderam", count:respondeu},
+    {id:"sem_resposta", label:"Sem resposta",count:clientes.filter(c=>c.status_envio==="Sem resposta").length},
   ];
+
+  const updateStatus = async (id, status) => {
+    try {
+      await sbFetch("pos_venda?id=eq."+id, "PATCH", {status_envio: status});
+      setClientes(cs=>cs.map(c=>c.id===id?{...c,status_envio:status}:c));
+      if(sel?.id===id) setSel(s=>({...s,status_envio:status}));
+    } catch(e) { setError(e.message); }
+  };
 
   return (
     <div>
@@ -5619,102 +5700,131 @@ function PosVenda({ currentUser }) {
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20,flexWrap:"wrap",gap:12}}>
         <div>
           <div style={{fontSize:20,fontWeight:800,color:C.text}}>🤝 Pós-venda</div>
-          <div style={{fontSize:12,color:C.muted,marginTop:2}}>Gestão de clientes ativos e acionamentos</div>
+          <div style={{fontSize:12,color:C.muted,marginTop:2}}>Gestão de clientes e acionamentos</div>
         </div>
-        <button onClick={loadClientes} style={{...btnG,padding:"8px 14px",fontSize:12}}>🔄 Atualizar</button>
-      </div>
-
-      {error&&<div style={{marginBottom:16,padding:"10px 14px",background:"rgba(248,113,113,0.1)",border:"1px solid #F87171",borderRadius:8,fontSize:12,color:"#F87171"}}>{error}</div>}
-
-      {/* KPIs */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}} className="mob-grid-2">
-        <div style={card({padding:14})}>
-          <div style={{fontSize:22,fontWeight:900,color:C.accent}}>{total}</div>
-          <div style={{fontSize:11,color:C.muted}}>Total clientes</div>
-        </div>
-        <div style={card({padding:14})}>
-          <div style={{fontSize:22,fontWeight:900,color:"#3B82F6"}}>{enviados}</div>
-          <div style={{fontSize:11,color:C.muted}}>Acionados</div>
-        </div>
-        <div style={card({padding:14})}>
-          <div style={{fontSize:22,fontWeight:900,color:"#8B5CF6"}}>{respondeu}</div>
-          <div style={{fontSize:11,color:C.muted}}>Responderam</div>
-        </div>
-        <div style={card({padding:14})}>
-          <div style={{fontSize:22,fontWeight:900,color:"#4ADE80"}}>{txResposta+"%"}</div>
-          <div style={{fontSize:11,color:C.muted}}>Taxa resposta</div>
+        <div style={{display:"flex",gap:8}}>
+          {tab==="agenda"&&<button onClick={()=>setShowForm(true)} style={{...btnP,padding:"9px 18px",fontSize:13}}>+ Agendar Acionamento</button>}
+          <button onClick={()=>{loadClientes();loadAgendamentos();}} style={{...btnG,padding:"8px 14px",fontSize:12}}>🔄 Atualizar</button>
         </div>
       </div>
 
-      {/* Filtros */}
-      <div style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:4}}>
-        {FILTROS.map(f=>(
-          <button key={f.id} onClick={()=>setFiltro(f.id)}
-            style={{padding:"6px 14px",borderRadius:20,border:"1px solid "+(filtro===f.id?C.accent:C.border),background:filtro===f.id?(C.accent+"18"):"transparent",color:filtro===f.id?C.accent:C.muted,fontSize:11,fontWeight:filtro===f.id?700:400,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
-            {f.label} <span style={{fontWeight:900}}>{f.count}</span>
+      {error&&<div style={{marginBottom:16,padding:"10px 14px",background:"rgba(248,113,113,0.1)",border:"1px solid #F87171",borderRadius:8,fontSize:12,color:"#F87171"}}>{error}<button onClick={()=>setError("")} style={{marginLeft:8,background:"transparent",border:"none",color:"#F87171",cursor:"pointer"}}>✕</button></div>}
+
+      {/* Tabs principais */}
+      <div style={{display:"flex",gap:0,marginBottom:20,border:"1px solid "+C.border,borderRadius:10,overflow:"hidden"}}>
+        {[["clientes","📋 Clientes ativos"],["agenda","📅 Agendamentos"]].map(([v,l])=>(
+          <button key={v} onClick={()=>setTab(v)}
+            style={{flex:1,padding:"10px",border:"none",background:tab===v?C.accent:"transparent",color:tab===v?"#fff":C.muted,fontWeight:tab===v?700:400,fontSize:12,cursor:"pointer",transition:"all 0.15s"}}>
+            {l}
+            {v==="agenda"&&agPendentes>0&&<span style={{marginLeft:6,background:"#F59E0B",color:"#fff",borderRadius:20,padding:"1px 7px",fontSize:10,fontWeight:700}}>{agPendentes}</span>}
           </button>
         ))}
       </div>
 
-      {/* Busca */}
-      <div style={{marginBottom:16}}>
-        <input value={busca} onChange={e=>setBusca(e.target.value)}
-          placeholder="Buscar por nome, razão social ou celular..."
-          style={{...inp,width:"100%"}}/>
-      </div>
-
-      {/* Lista */}
-      {loading
-        ?<div style={{textAlign:"center",padding:40,color:C.muted,fontSize:20}}>⟳ Carregando...</div>
-        :filtered.length===0
-          ?<div style={{...card({padding:40}),textAlign:"center",color:C.muted}}>
-            <div style={{fontSize:32,marginBottom:12}}>🤝</div>
-            <div>{clientes.length===0?"Nenhum cliente pós-venda ainda. Sincronize via N8N.":"Nenhum cliente encontrado com esse filtro."}</div>
+      {/* ── ABA CLIENTES ── */}
+      {tab==="clientes"&&(
+        <div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}} className="mob-grid-2">
+            <div style={card({padding:14})}><div style={{fontSize:22,fontWeight:900,color:C.accent}}>{total}</div><div style={{fontSize:11,color:C.muted}}>Total clientes</div></div>
+            <div style={card({padding:14})}><div style={{fontSize:22,fontWeight:900,color:"#3B82F6"}}>{enviados}</div><div style={{fontSize:11,color:C.muted}}>Acionados</div></div>
+            <div style={card({padding:14})}><div style={{fontSize:22,fontWeight:900,color:"#8B5CF6"}}>{respondeu}</div><div style={{fontSize:11,color:C.muted}}>Responderam</div></div>
+            <div style={card({padding:14})}><div style={{fontSize:22,fontWeight:900,color:"#4ADE80"}}>{txResposta+"%"}</div><div style={{fontSize:11,color:C.muted}}>Taxa resposta</div></div>
           </div>
-          :<div style={card({padding:0,overflow:"hidden"})}>
-            {filtered.map((c,i)=>{
-              const sc = STATUS_COLORS[c.status_envio]||C.muted;
-              const isPJ = c.tipo_pessoa==="PJ"||c.tipo==="PJ";
-              return (
-                <div key={c.id} onClick={()=>setSel(c)}
-                  style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<filtered.length-1?"1px solid "+C.border:"none",cursor:"pointer",transition:"background 0.1s"}}
-                  onMouseEnter={e=>e.currentTarget.style.background=C.accent+"08"}
-                  onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                  {/* Avatar */}
-                  <div style={{width:36,height:36,borderRadius:"50%",background:sc+"18",border:"1px solid "+sc+"33",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>
-                    {isPJ?"🏢":"👤"}
-                  </div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:13,fontWeight:700,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                      {c.nome_formatado||c.nome||c.razao_social}
-                    </div>
-                    <div style={{fontSize:11,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                      {c.razao_social} · {c.celular||c.whatsapp||"—"}
-                    </div>
-                    {c.data_envio&&(
-                      <div style={{fontSize:10,color:C.faint}}>Acionado: {c.data_envio?.substring(0,10)}</div>
-                    )}
-                  </div>
-                  <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0}}>
-                    <span style={{fontSize:9,color:sc,background:sc+"18",padding:"2px 8px",borderRadius:20,fontWeight:700,whiteSpace:"nowrap"}}>
-                      {c.status_envio||"Aguardando"}
-                    </span>
-                    <span style={{fontSize:9,color:C.faint}}>{c.tipo_pessoa||c.tipo||"—"}</span>
-                  </div>
-                </div>
-              );
-            })}
+          <div style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:4}}>
+            {FILTROS.map(f=>(
+              <button key={f.id} onClick={()=>setFiltro(f.id)}
+                style={{padding:"6px 14px",borderRadius:20,border:"1px solid "+(filtro===f.id?C.accent:C.border),background:filtro===f.id?(C.accent+"18"):"transparent",color:filtro===f.id?C.accent:C.muted,fontSize:11,fontWeight:filtro===f.id?700:400,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+                {f.label} <span style={{fontWeight:900}}>{f.count}</span>
+              </button>
+            ))}
           </div>
-      }
+          <div style={{marginBottom:16}}>
+            <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="Buscar por nome ou telefone..." style={{...inp,width:"100%"}}/>
+          </div>
+          {loading
+            ?<div style={{textAlign:"center",padding:40,color:C.muted}}>⟳ Carregando...</div>
+            :filtered.length===0
+              ?<div style={{...card({padding:40}),textAlign:"center",color:C.muted}}>
+                <div style={{fontSize:32,marginBottom:12}}>🤝</div>
+                <div>{clientes.length===0?"Nenhum cliente ainda.":"Nenhum resultado."}</div>
+              </div>
+              :<div style={card({padding:0,overflow:"hidden"})}>
+                {filtered.map((c,i)=>{
+                  const sc=STATUS_COLORS[c.status_envio]||C.muted;
+                  return (
+                    <div key={c.id} onClick={()=>setSel(c)}
+                      style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<filtered.length-1?"1px solid "+C.border:"none",cursor:"pointer"}}
+                      onMouseEnter={e=>e.currentTarget.style.background=C.accent+"08"}
+                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      <div style={{width:36,height:36,borderRadius:"50%",background:sc+"18",border:"1px solid "+sc+"33",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>
+                        {c.tipo_pessoa==="PJ"?"🏢":"👤"}
+                      </div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:700,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.nome_formatado||c.nome||c.razao_social}</div>
+                        <div style={{fontSize:11,color:C.muted}}>{c.celular||c.whatsapp||"—"}{c.vendedor?" · "+c.vendedor:""}</div>
+                      </div>
+                      <span style={{fontSize:9,color:sc,background:sc+"18",padding:"2px 8px",borderRadius:20,fontWeight:700,whiteSpace:"nowrap"}}>{c.status_envio||"Aguardando"}</span>
+                    </div>
+                  );
+                })}
+              </div>
+          }
+        </div>
+      )}
 
-      {/* Modal detalhe */}
+      {/* ── ABA AGENDAMENTOS ── */}
+      {tab==="agenda"&&(
+        <div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}} className="mob-grid-1">
+            <div style={{...card({padding:14}),borderLeft:"4px solid #F59E0B"}}>
+              <div style={{fontSize:22,fontWeight:900,color:"#F59E0B"}}>{agPendentes}</div>
+              <div style={{fontSize:11,color:C.muted}}>Pendentes</div>
+            </div>
+            <div style={{...card({padding:14}),borderLeft:"4px solid #4ADE80"}}>
+              <div style={{fontSize:22,fontWeight:900,color:"#4ADE80"}}>{agProcessados}</div>
+              <div style={{fontSize:11,color:C.muted}}>Processados</div>
+            </div>
+            <div style={{...card({padding:14}),borderLeft:"4px solid #F87171"}}>
+              <div style={{fontSize:22,fontWeight:900,color:"#F87171"}}>{agendamentos.filter(a=>a.status==="erro").length}</div>
+              <div style={{fontSize:11,color:C.muted}}>Com erro</div>
+            </div>
+          </div>
+
+          {agendamentos.length===0
+            ?<div style={{...card({padding:40}),textAlign:"center",color:C.muted}}>
+              <div style={{fontSize:32,marginBottom:12}}>📅</div>
+              <div>Nenhum agendamento ainda.</div>
+              <button onClick={()=>setShowForm(true)} style={{...btnP,padding:"10px 24px",marginTop:16}}>+ Agendar Acionamento</button>
+            </div>
+            :<div style={card({padding:0,overflow:"hidden"})}>
+              {agendamentos.map((a,i)=>{
+                const sc = AGENDA_STATUS_COLORS[a.status]||C.muted;
+                const dt = new Date(a.data_agendamento);
+                return (
+                  <div key={a.id} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<agendamentos.length-1?"1px solid "+C.border:"none"}}>
+                    <div style={{width:40,textAlign:"center",flexShrink:0}}>
+                      <div style={{fontSize:11,fontWeight:700,color:C.accent}}>{dt.getDate().toString().padStart(2,"0")}/{(dt.getMonth()+1).toString().padStart(2,"0")}</div>
+                      <div style={{fontSize:10,color:C.faint}}>{dt.getHours().toString().padStart(2,"0")}:{dt.getMinutes().toString().padStart(2,"0")}</div>
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:700,color:C.text}}>{a.nome}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{a.telefone}{a.vendedor?" · "+a.vendedor:""}</div>
+                    </div>
+                    <span style={{fontSize:9,color:sc,background:sc+"18",padding:"2px 8px",borderRadius:20,fontWeight:700,whiteSpace:"nowrap",textTransform:"capitalize"}}>{a.status}</span>
+                  </div>
+                );
+              })}
+            </div>
+          }
+        </div>
+      )}
+
+      {/* Modal detalhe cliente */}
       {sel&&(
         <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(6,14,28,0.85)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
           onClick={()=>setSel(null)}>
           <div style={{background:C.panel,border:"1px solid "+C.border,borderRadius:16,padding:0,width:"100%",maxWidth:480,boxShadow:"0 24px 64px rgba(0,0,0,0.6)",maxHeight:"85vh",overflowY:"auto"}}
             onClick={e=>e.stopPropagation()}>
-
-            {/* Modal header */}
             <div style={{padding:"20px 24px 16px",borderBottom:"1px solid "+C.border,display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
               <div>
                 <div style={{fontSize:16,fontWeight:800,color:C.text}}>{sel.nome_formatado||sel.nome||sel.razao_social}</div>
@@ -5723,25 +5833,21 @@ function PosVenda({ currentUser }) {
               </div>
               <button onClick={()=>setSel(null)} style={{background:"transparent",border:"none",color:C.muted,fontSize:20,cursor:"pointer"}}>✕</button>
             </div>
-
-            {/* Contato */}
             <div style={{padding:"16px 24px",borderBottom:"1px solid "+C.border}}>
               <div style={{fontSize:11,color:C.faint,fontWeight:700,marginBottom:10,textTransform:"uppercase",letterSpacing:1}}>Contato</div>
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 {sel.celular&&<div style={{fontSize:13,color:C.text}}>📱 {sel.celular}</div>}
-                {sel.whatsapp&&sel.whatsapp!==sel.celular&&<div style={{fontSize:13,color:C.text}}>💬 {sel.whatsapp}</div>}
                 {sel.email&&<div style={{fontSize:13,color:C.text}}>✉️ {sel.email}</div>}
                 {sel.estado&&<div style={{fontSize:13,color:C.text}}>📍 {sel.estado}</div>}
+                {sel.vendedor&&<div style={{fontSize:13,color:C.text}}>👤 {sel.vendedor}</div>}
               </div>
             </div>
-
-            {/* Status de envio */}
             <div style={{padding:"16px 24px",borderBottom:"1px solid "+C.border}}>
-              <div style={{fontSize:11,color:C.faint,fontWeight:700,marginBottom:10,textTransform:"uppercase",letterSpacing:1}}>Status do Acionamento</div>
+              <div style={{fontSize:11,color:C.faint,fontWeight:700,marginBottom:10,textTransform:"uppercase",letterSpacing:1}}>Status</div>
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                {["Aguardando","Enviado","Respondeu","Em conversa","Finalizado","Sem resposta"].map(st=>{
-                  const active = sel.status_envio===st;
-                  const sc = STATUS_COLORS[st]||C.muted;
+                {["Aguardando","Enviado","Respondeu","Em conversa","Agendou reunião","Sem resposta"].map(st=>{
+                  const active=sel.status_envio===st;
+                  const sc=STATUS_COLORS[st]||C.muted;
                   return (
                     <div key={st} onClick={()=>updateStatus(sel.id,st)}
                       style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,cursor:"pointer",border:"1px solid "+(active?sc:C.border),background:active?(sc+"12"):"transparent",transition:"all 0.15s"}}>
@@ -5753,40 +5859,147 @@ function PosVenda({ currentUser }) {
                 })}
               </div>
             </div>
-
-            {/* Datas */}
-            <div style={{padding:"16px 24px",borderBottom:"1px solid "+C.border}}>
-              <div style={{fontSize:11,color:C.faint,fontWeight:700,marginBottom:10,textTransform:"uppercase",letterSpacing:1}}>Histórico</div>
-              <div style={{display:"flex",flexDirection:"column",gap:6,fontSize:12,color:C.muted}}>
-                {sel.data_cadastro&&<div>📋 Cadastro: {sel.data_cadastro_fmt||sel.data_cadastro}</div>}
-                {sel.data_envio&&<div>📤 Acionado: {sel.data_envio?.substring(0,16)?.replace("T"," ")}</div>}
-                {sel.chat_id&&<div style={{fontSize:10,color:C.faint}}>Chat ID: {sel.chat_id}</div>}
-              </div>
-            </div>
-
-            {/* Ações */}
             <div style={{padding:"16px 24px",display:"flex",gap:8,flexWrap:"wrap"}}>
               {(sel.celular||sel.whatsapp)&&(
                 <button onClick={()=>{
                   const raw=((sel.whatsapp||sel.celular)||"").replace(/\D/g,"");
                   const phone=raw.startsWith("55")?raw:"55"+raw;
                   window.open("https://api.whatsapp.com/send?phone="+phone,"_blank");
-                }} style={{...btnP,flex:1,padding:"9px",fontSize:12,background:"linear-gradient(135deg,#25D366,#128C7E)"}}>
-                  📱 WhatsApp
-                </button>
+                }} style={{...btnP,flex:1,padding:"9px",fontSize:12,background:"linear-gradient(135deg,#25D366,#128C7E)"}}>📱 WhatsApp</button>
               )}
-              {sel.email&&(
-                <button onClick={()=>window.open("mailto:"+sel.email,"_blank")}
-                  style={{...btnP,flex:1,padding:"9px",fontSize:12,background:"linear-gradient(135deg,#3B82F6,#1D4ED8)"}}>
-                  ✉️ Email
-                </button>
-              )}
-              {sel.celular&&(
-                <button onClick={()=>window.open("tel:"+sel.celular,"_blank")}
-                  style={{...btnG,flex:1,padding:"9px",fontSize:12}}>
-                  📞 Ligar
-                </button>
-              )}
+              {sel.email&&<button onClick={()=>window.open("mailto:"+sel.email,"_blank")} style={{...btnP,flex:1,padding:"9px",fontSize:12,background:"linear-gradient(135deg,#3B82F6,#1D4ED8)"}}>✉️ Email</button>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Agendar Acionamento */}
+      {showForm&&(
+        <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(6,14,28,0.85)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+          onClick={()=>setShowForm(false)}>
+          <div style={{background:C.panel,border:"1px solid "+C.border,borderRadius:16,padding:24,width:"100%",maxWidth:520,boxShadow:"0 24px 64px rgba(0,0,0,0.6)",maxHeight:"90vh",overflowY:"auto"}}
+            onClick={e=>e.stopPropagation()}>
+            <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:4}}>📅 Agendar Acionamento</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:20}}>Preencha os dados do contato e defina quando disparar</div>
+
+            {/* Data/hora e vendedor — campos globais do lote */}
+            <div style={{...card({padding:14}),marginBottom:16,border:"1px solid "+C.accent+"44",background:C.accent+"06"}}>
+              <div style={{fontSize:11,color:C.accent,fontWeight:700,marginBottom:10,textTransform:"uppercase",letterSpacing:1}}>Configuração do acionamento</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}} className="mob-grid-1">
+                <div>
+                  <div style={lbl}>Data e hora do disparo *</div>
+                  <input type="datetime-local" value={form.data_agendamento}
+                    onChange={e=>f("data_agendamento",e.target.value)} style={inp}/>
+                </div>
+                <div>
+                  <div style={lbl}>Vendedor responsável</div>
+                  <input value={form.vendedor} onChange={e=>f("vendedor",e.target.value)}
+                    placeholder="Nome do vendedor" style={inp}/>
+                </div>
+              </div>
+            </div>
+
+            {/* Dados do contato */}
+            <div style={{marginBottom:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <div style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:1}}>Dados do contato</div>
+                <label style={{...btnG,padding:"5px 12px",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+                  📎 Importar CSV/Excel
+                  <input type="file" accept=".csv,.xlsx,.xls" style={{display:"none"}}
+                    onChange={async(e)=>{
+                      const file = e.target.files[0];
+                      if(!file) return;
+                      const ext = file.name.split(".").pop().toLowerCase();
+                      try {
+                        if(ext==="csv"){
+                          const text = await file.text();
+                          const rows = text.trim().split("\n");
+                          const header = rows[0].split(/[;,]/).map(h=>h.trim().toLowerCase().replace(/"/g,""));
+                          const getCol = (row, names) => {
+                            const idx = names.map(n=>header.indexOf(n)).find(i=>i>=0);
+                            return idx>=0 ? row[idx]?.replace(/"/g,"")?.trim() : "";
+                          };
+                          const imported = rows.slice(1).filter(r=>r.trim()).map(row=>{
+                            const cols = row.split(/[;,]/);
+                            return {
+                              id: Date.now()+Math.random(),
+                              nome: getCol(cols,["nome","name","cliente","razao_social","razão social"]),
+                              telefone: getCol(cols,["telefone","celular","fone","phone","tel"]),
+                              cpf_cnpj: getCol(cols,["cpf","cnpj","cpf_cnpj","documento"]),
+                              data_relacionamento: getCol(cols,["data_relacionamento","data_contato","ultimo_contato","data"]),
+                              data_agendamento: getCol(cols,["data_agendamento","data","hora","disparo"])||form.data_agendamento,
+                              vendedor: getCol(cols,["vendedor","seller","responsavel"])||form.vendedor,
+                            };
+                          }).filter(r=>r.nome&&r.telefone);
+                          setLote(l=>[...l,...imported]);
+                        } else {
+                          setError("Por enquanto só CSV é suportado. Salve seu Excel como CSV e tente novamente.");
+                        }
+                      } catch(err) {
+                        setError("Erro ao importar: "+err.message);
+                      }
+                      e.target.value="";
+                    }}/>
+                </label>
+              </div>
+              <div style={{fontSize:10,color:C.faint,marginBottom:10,padding:"6px 10px",background:C.sidebar,borderRadius:6}}>
+                📋 CSV deve ter colunas: <strong>nome</strong>, <strong>telefone</strong>, <strong>data_agendamento</strong> (obrigatórios) + cpf_cnpj, data_relacionamento, vendedor (opcionais). Separador: vírgula ou ponto-e-vírgula. Data no formato: AAAA-MM-DD HH:MM
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}} className="mob-grid-1">
+                <div>
+                  <div style={lbl}>Nome *</div>
+                  <input value={form.nome} onChange={e=>f("nome",e.target.value)}
+                    placeholder="Nome completo" style={inp}/>
+                </div>
+                <div>
+                  <div style={lbl}>Telefone com DDD *</div>
+                  <input value={form.telefone} onChange={e=>f("telefone",e.target.value)}
+                    placeholder="11999999999" style={inp}/>
+                </div>
+                <div>
+                  <div style={lbl}>CPF/CNPJ</div>
+                  <input value={form.cpf_cnpj} onChange={e=>f("cpf_cnpj",e.target.value)}
+                    placeholder="000.000.000-00" style={inp}/>
+                  <div style={{fontSize:9,color:C.faint,marginTop:3}}>Pontos e traços removidos automaticamente</div>
+                </div>
+                <div>
+                  <div style={lbl}>Data do último contato com a loja</div>
+                  <input type="date" value={form.data_relacionamento} onChange={e=>f("data_relacionamento",e.target.value)} style={inp}/>
+                </div>
+              </div>
+              <button onClick={addToLote} style={{...btnG,width:"100%",padding:"9px",fontSize:12}}>
+                + Adicionar à lista
+              </button>
+            </div>
+
+            {/* Lista do lote */}
+            {lote.length>0&&(
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,color:C.muted,fontWeight:700,marginBottom:8}}>{lote.length} contato{lote.length>1?"s":""} na lista</div>
+                <div style={{maxHeight:160,overflowY:"auto",display:"flex",flexDirection:"column",gap:4}}>
+                  {lote.map(item=>(
+                    <div key={item.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:C.sidebar,borderRadius:8,border:"1px solid "+C.border}}>
+                      <div style={{flex:1}}>
+                        <span style={{fontSize:12,fontWeight:700,color:C.text}}>{item.nome}</span>
+                        <span style={{fontSize:11,color:C.muted,marginLeft:8}}>{item.telefone}</span>
+                        {item.cpf_cnpj&&<span style={{fontSize:10,color:C.faint,marginLeft:8}}>{item.cpf_cnpj}</span>}
+                      </div>
+                      <button onClick={()=>removeFromLote(item.id)}
+                        style={{background:"transparent",border:"none",color:"#F87171",cursor:"pointer",fontSize:14}}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {error&&<div style={{marginBottom:12,padding:"8px 12px",background:"rgba(248,113,113,0.1)",border:"1px solid rgba(248,113,113,0.3)",borderRadius:8,fontSize:12,color:"#F87171"}}>{error}</div>}
+
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>{setShowForm(false);setLote([]);setError("");}} style={{...btnG,flex:1,padding:"11px"}}>Cancelar</button>
+              <button onClick={salvarAgendamentos} disabled={saving}
+                style={{...btnP,flex:2,padding:"11px",fontSize:13,fontWeight:700,opacity:saving?0.7:1}}>
+                {saving?"⟳ Salvando...":(lote.length>0?"📅 Salvar "+lote.length+" contatos":"📅 Salvar agendamento")}
+              </button>
             </div>
           </div>
         </div>
@@ -5796,7 +6009,104 @@ function PosVenda({ currentUser }) {
 }
 
 
-// ─── SUPER ADMIN PANEL ───────────────────────────────────────────────────────
+function WebhooksConfig({ tenants, onSaved }) {
+  const [selTenant, setSelTenant] = useState(tenants[0]?.id||"");
+  const [webhooks, setWebhooks]   = useState({busca_leads:"",pos_resposta:""});
+  const [loading, setLoading]     = useState(false);
+  const [saved, setSaved]         = useState(false);
+
+  useEffect(()=>{
+    if(!selTenant) return;
+    const t = tenants.find(t=>t.id===selTenant);
+    if(!t) return;
+    try {
+      const cfg = typeof t.config==="string"?JSON.parse(t.config||"{}"):( t.config||{});
+      setWebhooks({busca_leads:cfg.webhooks?.busca_leads||"",pos_resposta:cfg.webhooks?.pos_resposta||""});
+    } catch(e){ setWebhooks({busca_leads:"",pos_resposta:""}); }
+  },[selTenant, tenants]);
+
+  const saveWebhooks = async () => {
+    if(!selTenant) return;
+    setLoading(true);
+    try {
+      const t = tenants.find(t=>t.id===selTenant);
+      const existingCfg = typeof t?.config==="string"?JSON.parse(t?.config||"{}"):( t?.config||{});
+      await sbFetch("tenants?id=eq."+selTenant,"PATCH",{config: JSON.stringify({...existingCfg, webhooks})});
+      setSaved(true); setTimeout(()=>setSaved(false),2000);
+      if(onSaved) onSaved("Webhooks salvos");
+    } catch(e){ alert("Erro ao salvar: "+e.message); }
+    finally { setLoading(false); }
+  };
+
+  const FIELDS = [
+    {key:"busca_leads",  label:"Busca de Leads",     placeholder:"https://n8n.app/webhook/busca-leads",  desc:"Chamado quando vendedor busca novos leads"},
+    {key:"pos_resposta", label:"Resposta do Cliente", placeholder:"https://n8n.app/webhook/pos-resposta", desc:"Acionado quando cliente responde via WhatsApp"},
+  ];
+
+  const currentTenant = tenants.find(t=>t.id===selTenant);
+
+  return (
+    <div>
+      <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:4}}>Configurar Webhooks por Empresa</div>
+      <div style={{fontSize:12,color:C.muted,marginBottom:20}}>Selecione a empresa e configure as URLs dos fluxos N8N.</div>
+      <div style={{...card({padding:16}),marginBottom:20}}>
+        <div style={lbl}>Empresa</div>
+        <select value={selTenant} onChange={e=>setSelTenant(e.target.value)} style={inp}>
+          <option value="">Selecione...</option>
+          {tenants.map(t=>(<option key={t.id} value={t.id}>{t.name}</option>))}
+        </select>
+        {currentTenant&&(
+          <div style={{marginTop:10,padding:"8px 12px",background:C.sidebar,borderRadius:6}}>
+            <div style={{fontSize:10,color:C.faint,fontWeight:700,marginBottom:4}}>TENANT ID</div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <div style={{flex:1,fontSize:11,color:C.accent,fontFamily:"monospace"}}>{currentTenant.id}</div>
+              <button onClick={()=>navigator.clipboard&&navigator.clipboard.writeText(currentTenant.id)} style={{...btnG,padding:"4px 10px",fontSize:10}}>Copiar</button>
+            </div>
+          </div>
+        )}
+      </div>
+      {selTenant&&(
+        <div style={{...card({padding:20}),marginBottom:16}}>
+          <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:16}}>URLs dos Fluxos N8N</div>
+          {FIELDS.map(field=>(
+            <div key={field.key} style={{marginBottom:16,padding:"14px 16px",background:C.sidebar,borderRadius:10,border:"1px solid "+C.border}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:2}}>{field.label}</div>
+              <div style={{fontSize:11,color:C.faint,marginBottom:8}}>{field.desc}</div>
+              <input style={inp} value={webhooks[field.key]||""} onChange={e=>setWebhooks(w=>({...w,[field.key]:e.target.value}))} placeholder={field.placeholder}/>
+              {webhooks[field.key]?<div style={{fontSize:9,color:"#4ADE80",marginTop:4}}>Configurado</div>:<div style={{fontSize:9,color:"#F59E0B",marginTop:4}}>Nao configurado</div>}
+            </div>
+          ))}
+          {saved&&<div style={{marginBottom:12,padding:"8px 12px",background:"rgba(74,222,128,0.1)",border:"1px solid #4ADE80",borderRadius:6,fontSize:12,color:"#4ADE80"}}>Salvo!</div>}
+          <button onClick={saveWebhooks} disabled={loading} style={{...btnP,width:"100%",padding:"11px",fontSize:13,fontWeight:700,opacity:loading?0.7:1}}>
+            {loading?"Salvando...":"Salvar Webhooks"}
+          </button>
+        </div>
+      )}
+      <div style={{...card({padding:20})}}>
+        <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:14}}>Status dos Webhooks</div>
+        {tenants.map(t=>{
+          let cfg={};
+          try{ cfg=typeof t.config==="string"?JSON.parse(t.config||"{}"):( t.config||{}); }catch(e){}
+          const wh=cfg.webhooks||{};
+          const configured=Object.values(wh).filter(v=>v).length;
+          return (
+            <div key={t.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderRadius:8,border:"1px solid "+C.border,marginBottom:8,cursor:"pointer",background:selTenant===t.id?(C.accent+"08"):"transparent"}} onClick={()=>setSelTenant(t.id)}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:600,color:C.text}}>{t.name}</div>
+                <div style={{fontSize:10,color:C.faint}}>/{t.slug}</div>
+              </div>
+              <div style={{display:"flex",gap:4}}>
+                {FIELDS.map(f=>(<div key={f.key} style={{width:8,height:8,borderRadius:"50%",background:wh[f.key]?"#4ADE80":"#F87171"}}/>))}
+              </div>
+              <div style={{fontSize:11,color:configured===FIELDS.length?"#4ADE80":"#F59E0B",fontWeight:700}}>{configured}/{FIELDS.length}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function SuperAdminPanel({ currentUser }) {
   const [tab, setTab]           = useState("tenants");
   const [tenants, setTenants]   = useState([]);
@@ -5897,7 +6207,20 @@ function SuperAdminPanel({ currentUser }) {
       {saved&&<div style={{marginBottom:16,padding:"10px 14px",background:"rgba(74,222,128,0.1)",border:"1px solid #4ADE80",borderRadius:8,fontSize:12,color:"#4ADE80",fontWeight:700}}>✅ {saved}</div>}
       {error&&<div style={{marginBottom:16,padding:"10px 14px",background:"rgba(248,113,113,0.1)",border:"1px solid #F87171",borderRadius:8,fontSize:12,color:"#F87171"}}>{error}<button onClick={()=>setError("")} style={{marginLeft:8,background:"transparent",border:"none",color:"#F87171",cursor:"pointer"}}>✕</button></div>}
 
-      {/* KPIs */}
+
+      {/* Tabs */}
+      <div style={{display:"flex",gap:6,marginBottom:20}}>
+        {[["tenants","Empresas"],["webhooks","Webhooks N8N"]].map(([v,l])=>(
+          <button key={v} onClick={()=>setTab(v)}
+            style={{padding:"8px 18px",borderRadius:8,border:"1px solid "+(tab===v?C.accent:C.border),background:tab===v?(C.accent+"18"):"transparent",color:tab===v?C.accent:C.muted,fontSize:12,fontWeight:tab===v?700:400,cursor:"pointer"}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {tab==="tenants"&&(
+      <div>
+            {/* KPIs */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}} className="mob-grid-2">
         <div style={card({padding:14})}>
           <div style={{fontSize:22,fontWeight:900,color:C.accent}}>{tenants.length}</div>
@@ -5995,7 +6318,14 @@ function SuperAdminPanel({ currentUser }) {
       }
 
       {/* Modal: Nova Empresa */}
-      {showNew&&(
+      </div>
+      )}
+
+      {tab==="webhooks"&&(
+        <WebhooksConfig tenants={tenants} onSaved={(msg)=>{setSaved(msg);setTimeout(()=>setSaved(""),3000);}}/>
+      )}
+
+            {showNew&&(
         <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(6,14,28,0.85)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
           onClick={()=>setShowNew(false)}>
           <div style={{background:C.panel,border:"1px solid "+C.border,borderRadius:16,padding:24,width:"100%",maxWidth:460,boxShadow:"0 24px 64px rgba(0,0,0,0.6)"}}
@@ -6058,6 +6388,7 @@ export default function App() {
   const [user,setUser]=useState(null);
   const [profile,setProfile]=useState(DEFAULT_PROFILE);
   const [ownerWebhook,setOwnerWebhook]=useState("https://seu-n8n.app.n8n.cloud/webhook/pipe-tm");
+  const [ownerWebhooks,setOwnerWebhooks]=useState({busca_leads:"",pos_resposta:""});
 
   const [leads,setLeads]=useState([]);
   const [sbLoading,setSbLoading]=useState(true);
@@ -6085,7 +6416,8 @@ export default function App() {
         setLeads(srcLeads.map(l=>({...l,funilStage:firstStage,status:l.status||firstName})));
       };
       try {
-        const rows = await sbGetLeads(user?.tenant_id);
+        if(user?.tenant_id){ try { const t=await sbFetch("tenants?id=eq."+user.tenant_id+"&select=config"); if(t&&t[0]?.config){ const cfg=typeof t[0].config==="string"?JSON.parse(t[0].config):t[0].config; if(cfg.webhooks) setOwnerWebhooks(w=>({...w,...cfg.webhooks})); } } catch(e){ console.warn(e); } }
+        const rows = await sbGetLeads(user?.tenant_id); // loads all modules
         if(rows && rows.length > 0){
           rows.forEach(r=>{ setLeadStage(r.id, r.funil_stage||firstStage); });
           setLeads(rows.map(dbToLead));
@@ -6209,7 +6541,7 @@ export default function App() {
     {id:"suporte",     label:"Suporte",              icon:"headset",   group:"Módulos"},
     {id:"settings", label:"Configurações",    icon:"settings",  group:"Gestão"},
     ...(isMaster?[{id:"master",label:"Controle de Acesso",icon:"shield",group:"Gestão",master:true}]:[]),
-    ...(isOwner?[{id:"owner",label:"Painel Owner",icon:"zap",group:"Owner",owner:true}]:[]),
+    ...(isOwner?[]:[]),
   ];
   const nav = ALL_NAV.filter(n => hasAccess(n.id));
   const presentGroups = [...new Set(nav.map(n=>n.group))];
@@ -6217,7 +6549,7 @@ export default function App() {
   const renderPage = (pg) => {
     if(pg==="dashboard") return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} users={DB.all()} currentUser={user} isMaster={isMaster}/>;
     if(pg==="profile") return <CompanyProfile profile={profile} onSave={p=>{setProfile(p);notify("Perfil salvo!");}} />;
-    if(pg==="search") return <SearchLeads onLeadsFound={addLead} existingLeads={leads} profile={profile} currentUser={user} ownerWebhook={ownerWebhook}/>;
+    if(pg==="search") return <SearchLeads onLeadsFound={addLead} existingLeads={leads} profile={profile} currentUser={user} ownerWebhook={ownerWebhooks.busca_leads||ownerWebhook}/>;
     if(pg==="addlead") return <AddLead onLeadsFound={addLead} existingLeads={leads} profile={profile}/>;
     if(pg==="messages") return <Messages leads={leads} profile={profile}/>;
     if(pg==="whatsapp") return <WhatsappSender leads={leads} profile={profile} webhook={ownerWebhook}/>;
@@ -6232,7 +6564,6 @@ export default function App() {
     if(pg==="settings") return <Settings user={user}/>;
     if(pg==="master") return <MasterPanel/>;
     if(pg==="super_admin") return <SuperAdminPanel currentUser={user}/>;
-    if(pg==="owner") return <OwnerPanel webhook={ownerWebhook} onWebhookChange={setOwnerWebhook} user={user}/>;
     return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} users={DB.all()||[]} currentUser={user} isMaster={isMaster}/>;
   };
 
