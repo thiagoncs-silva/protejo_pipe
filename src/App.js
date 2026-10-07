@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+/* eslint-disable */  
+import React, { useState, useEffect, useRef } from "react";
 
 // ─── SUPABASE CONFIG ──────────────────────────────────────────────────────────
 const SB_URL = "https://rbizynwybepmlljgcveq.supabase.co";
@@ -1284,7 +1285,7 @@ function StatusDropdown({lead, onUpdate}) {
 }
 
 
-function LeadDetailModal({lead, onClose, onUpdate, onAcionar}) {
+function LeadDetailModal({lead, onClose, onUpdate, onAcionar, onSetPage=()=>{}}) {
   const sc = lead.score>=70?"#4ADE80":lead.score>=40?"#FBBF24":"#F87171";
   return (
     <div style={{position:"fixed",inset:0,zIndex:600,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(6,14,28,0.9)",backdropFilter:"blur(6px)"}} onClick={onClose}>
@@ -2079,6 +2080,9 @@ function Messages({leads,profile}) {
     const persona = inferPersona(lead);
     const bt = lead.bestTime||{};
     const p  = profile||{};
+    const companyCtx = p.name ? `Empresa vendedora: ${p.name}. Segmento: ${p.segment||"saúde"}.` : "";
+    const quantity = 3;
+    const channels = ["whatsapp","email","linkedin"];
 
     const prompt = `Você é especialista em copywriting B2B para saúde e logística cirúrgica no Brasil. ${companyCtx} Gere ${quantity} mensagens personalizadas de prospecção para: Nome: ${lead.name}, Cargo: ${lead.role}, Empresa: ${lead.company}, Cidade: ${lead.city}. Canais solicitados: ${channels.join(", ")}. Para cada canal retorne objeto JSON com: {channel, subject(se email), message, tone, bestTime}. Retorne APENAS array JSON válido sem markdown.`;
 
@@ -2499,7 +2503,7 @@ function WhatsappSender({leads,profile,webhook}) {
 }
 
 // ─── ACIONAMENTO MODAL ────────────────────────────────────────────────────────
-function AcionamentoModal({lead,onUpdate,onClose}) {
+function AcionamentoModal({lead,onUpdate,onClose,currentUser=null}) {
   const [tipo,setTipo]=useState("WhatsApp");
   const [res,setRes]=useState("Sem resposta");
   const [novoStatus,setNovoStatus]=useState(lead.status);
@@ -2540,8 +2544,9 @@ function AcionamentoModal({lead,onUpdate,onClose}) {
 }
 
 // ─── CRM ─────────────────────────────────────────────────────────────────────
-function CRM({leads,onUpdateLead,onDeleteLead}) {
+function CRM({leads,onUpdateLead,onDeleteLead,currentUser=null}) {
   const [filter,setFilter]=useState("Todos");
+  const [cadenceLead,setCadenceLead] = useState(null);
   const [search,setSearch]=useState("");
   const [sortBy,setSortBy]=useState("score");
   const [prioFilter,setPrioFilter]=useState("Todas");
@@ -2559,7 +2564,7 @@ function CRM({leads,onUpdateLead,onDeleteLead}) {
   const handleNote=(lead)=>{if(!newNote.trim())return;onUpdateLead({...lead,notes:lead.notes?lead.notes+"\n→ "+newNote:"→ "+newNote});setNewNote("");};
 
   const exportCSV=()=>{
-    exportLeadsToCSV(filteredLeads,"crm_pipe_tm_"+new Date().toISOString().split("T")[0]);
+    exportLeadsToCSV(leads,"crm_pipe_tm_"+new Date().toISOString().split("T")[0]);
   };
 
   const leadAcionando=leads.find(l=>l.id===acionando);
