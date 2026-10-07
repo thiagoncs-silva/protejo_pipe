@@ -4807,14 +4807,30 @@ function OwnerPanel({ webhook, onWebhookChange }) {
 
 // ─── MASTER ACCESS CONTROL PANEL ─────────────────────────────────────────────
 function MasterPanel({ currentUser }) {
+  const isOwner = currentUser?.role === "owner";
   const [users,setUsers]=useState([]);
+  const [tenants,setTenants]=useState([]);
+  const [selTenantId,setSelTenantId]=useState(currentUser?.tenant_id||"");
   const [view,setView]=useState("list");
   const [form,setForm]=useState({name:"",email:"",password:"",role:"user"});
   const [err,setErr]=useState("");
   const [ok,setOk]=useState("");
   const [busy,setBusy]=useState(false);
+  const [loadingTenants,setLoadingTenants]=useState(false);
   const [confirmId,setConfirmId]=useState(null);
-  const tenantId = currentUser?.tenant_id;
+
+  // Se owner, carrega lista de empresas para seletor
+  useEffect(()=>{
+    if(!isOwner) return;
+    setLoadingTenants(true);
+    sbFetch("tenants?select=id,name,status&order=name.asc")
+      .then(data=>{ setTenants(Array.isArray(data)?data:[]); })
+      .catch(()=>{})
+      .finally(()=>setLoadingTenants(false));
+  },[isOwner]);
+
+  // Tenant efetivo: owner usa seletor, admin usa o próprio
+  const tenantId = isOwner ? selTenantId : currentUser?.tenant_id;
 
   const refresh = async () => {
     if(!tenantId) return;
@@ -4822,10 +4838,10 @@ function MasterPanel({ currentUser }) {
       const data = await sbAuth.getTenantUsers(tenantId);
       setUsers(Array.isArray(data)?data:[]);
     } catch(e) {
-      setUsers(DB.all().filter(u=>u.tenant_id===tenantId));
+      setUsers([]);
     }
   };
-  useEffect(()=>{ refresh(); },[tenantId]);
+  useEffect(()=>{ if(tenantId) refresh(); },[tenantId]);
 
   const cancelUser = async (id) => {
     try { await sbAuth.updateUser(id,{status:"cancelado"}); } catch(e) { DB.update(id,{status:"cancelado"}); }
@@ -4892,18 +4908,35 @@ function MasterPanel({ currentUser }) {
       )}
 
       {/* Header */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:22}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18}}>
         <div>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:3}}>
             <div style={{fontSize:20,fontWeight:800,color:C.text}}>Controle de Acesso</div>
             <span style={{fontSize:11,fontWeight:800,color:gold,background:(gold+"18"),border:("1px solid "+gold+"44"),padding:"3px 10px",borderRadius:20}}>★ MASTER</span>
           </div>
-          <div style={{fontSize:12,color:C.muted}}>Gestão completa de usuários da plataforma</div>
+          <div style={{fontSize:12,color:C.muted}}>Gestão de usuários por empresa</div>
         </div>
-        <button style={{...btnP,background:("linear-gradient(135deg,"+gold+",#D97706)")}} onClick={()=>{setView(v=>v==="list"?"new":"list");setErr("");}}>
+        <button style={{...btnP,background:("linear-gradient(135deg,"+gold+",#D97706)"),opacity:tenantId?1:0.5}} disabled={!tenantId} onClick={()=>{setView(v=>v==="list"?"new":"list");setErr("");}}>
           {view==="list"?<><Icon d={IC.plus} size={14} color="#fff"/>Novo Usuário</>:"← Ver Lista"}
         </button>
       </div>
+
+      {/* Seletor de empresa — só para owner */}
+      {isOwner&&(
+        <div style={{...card({marginBottom:18}),display:"flex",alignItems:"center",gap:14,padding:"14px 18px"}}>
+          <div style={{fontSize:13,fontWeight:700,color:C.text,flexShrink:0}}>🏢 Empresa:</div>
+          {loadingTenants
+            ? <div style={{fontSize:12,color:C.faint}}>Carregando empresas...</div>
+            : <select style={{...inp,margin:0,flex:1,maxWidth:400}} value={selTenantId} onChange={e=>{ setSelTenantId(e.target.value); setView("list"); }}>
+                <option value="">— Selecione uma empresa —</option>
+                {tenants.map(t=>(
+                  <option key={t.id} value={t.id}>{t.name}{t.status!=="active"?" ("+t.status+")":""}</option>
+                ))}
+              </select>
+          }
+          {selTenantId&&<div style={{fontSize:11,color:C.faint,flexShrink:0}}>{users.length} usuário{users.length!==1?"s":""}</div>}
+        </div>
+      )}
 
       {/* KPIs */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14,marginBottom:22}}>
