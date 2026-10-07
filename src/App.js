@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from "react";
 
 // ─── SUPABASE CONFIG ──────────────────────────────────────────────────────────
 const SB_URL = "https://rbizynwybepmlljgcveq.supabase.co";
-const SB_KEY = "sb_publishable_oqQ9VvnLTSZI4yYiu4UsyA_EV1a2nT4";
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJiaXp5bnd5YmVwbWxsamdjdmVxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU3Mjg5NzcsImV4cCI6MjEwMTMwNDk3N30.kY7wENPhk_KpGoI--fxeiXR17z4n7qHDJJH7EBTXggk";
 
 // ─── TENANT CONFIG — branding por empresa ────────────────────────────────────
 // Carregado do Supabase após login — sobrescreve os padrões
@@ -46,22 +46,18 @@ const sbFetch = async (path, method="GET", body=null) => {
     method,
     headers: {
       "apikey": SB_KEY,
-      "Authorization": "Bearer " + (typeof sbAuth!=="undefined"&&sbAuth.token?sbAuth.token():SB_KEY),
+      "Authorization": "Bearer "+SB_KEY,
       "Content-Type": "application/json",
-      "Prefer": method==="POST" ? "return=representation" : "return=minimal",
+      "Prefer": method==="POST"?"return=representation":"return=minimal",
     },
     mode: "cors",
   };
   if(body) opts.body = JSON.stringify(body);
-  try {
-    const res = await fetch(SB_URL + "/rest/v1/" + path, opts);
-    if(!res.ok) { const err = await res.text(); throw new Error("Supabase "+res.status+": "+err); }
-    const text = await res.text();
-    return text ? JSON.parse(text) : null;
-  } catch(e) {
-    if(e.message.includes("fetch")) throw new Error("Sem conexão com Supabase - verifique sua internet");
-    throw e;
-  }
+  const res = await fetch(SB_URL+"/rest/v1/"+path, opts);
+  const text = await res.text();
+  const parsed = text ? JSON.parse(text) : null;
+  if(!res.ok) throw new Error(parsed?.message||parsed?.error||"Erro "+res.status);
+  return parsed;
 };
 
 // ── Supabase helpers ──────────────────────────────────────────────────────────
@@ -358,7 +354,7 @@ const hasPermission = (user, tenantCfg, mod, action) => {
   const tp = tenantCfg?.permissions?.[mod];
   if(!tp||!tp.items?.includes(action)) return false;
   if(user.role==="admin") return true;
-  const up = user.perms_v2?.[mod];
+  const up = user.perms?.[mod];
   return Array.isArray(up)&&up.includes(action);
 };
 const DEFAULT_USER_PERMS = ["dashboard","profile","search","addlead","messages","whatsapp","crm","funil","metas","settings"];
@@ -624,43 +620,59 @@ let _currentSession = null;
 let _currentTenant = null;
 
 const sbAuth = {
-  // Login via Supabase Auth
-  login: async (email, password) => {
-    const res = await fetch(SB_URL+"/auth/v1/token?grant_type=password", {
-      method: "POST",
-      headers: {"Content-Type":"application/json","apikey":SB_KEY},
-      body: JSON.stringify({email, password})
-    });
-    const data = await res.json();
-    if(data.error || !data.access_token) throw new Error(data.error_description||data.msg||"Email ou senha incorretos");
-    _currentSession = data;
-    return data;
-  },
-
-  // Logout
   logout: () => { _currentSession = null; _currentTenant = null; },
+  token: () => SB_KEY,
 
-  // Get current access token
-  token: () => _currentSession?.access_token || SB_KEY,
-
-  // Fetch user profile from users table
-  getProfile: async (userId) => {
-    const res = await fetch(SB_URL+"/rest/v1/users?id=eq."+userId+"&select=*,tenants(*)", {
-      headers: {"apikey":SB_KEY,"Authorization":"Bearer "+sbAuth.token()}
-    });
-    const data = await res.json();
-    return data[0] || null;
+  // Login direto na tabela users (senha texto puro por ora)
+  login: async (email, password) => {
+    const data = await sbFetch(`users?email=eq.${encodeURIComponent(email)}&select=*`);
+    if(!Array.isArray(data)||data.length===0) throw new Error("Usuário não encontrado.");
+    const user = data[0];
+    if(user.password !== password) throw new Error("Senha incorreta.");
+    if(user.status==="cancelado"||user.status==="inactive") throw new Error("Acesso cancelado. Contate o administrador.");
+    // atualiza last_login
+    try { await sbFetch(`users?id=eq.${user.id}`, "PATCH", {last_login: new Date().toISOString()}); } catch(e){}
+    return user;
   },
 
-  // Fetch tenant config
+  // Busca tenant
   getTenant: async (tenantId) => {
-    const res = await fetch(SB_URL+"/rest/v1/tenants?id=eq."+tenantId+"&select=*", {
-      headers: {"apikey":SB_KEY,"Authorization":"Bearer "+sbAuth.token()}
-    });
-    const data = await res.json();
-    _currentTenant = data[0] || null;
+    const data = await sbFetch(`tenants?id=eq.${tenantId}&select=*`);
+    _currentTenant = data?.[0] || null;
     if(_currentTenant) applyTenantConfig(_currentTenant);
     return _currentTenant;
+  },
+
+  // Cria usuário no Supabase
+  createUser: async (userData) => {
+    const data = await sbFetch("users", "POST", userData);
+    return data?.[0] || data;
+  },
+
+  // Cria tenant no Supabase
+  createTenant: async (tenantData) => {
+    const data = await sbFetch("tenants", "POST", tenantData);
+    return data?.[0] || data;
+  },
+
+  // Lista usuários de um tenant
+  getTenantUsers: async (tenantId) => {
+    return await sbFetch(`users?tenant_id=eq.${tenantId}&select=id,name,email,role,status,created_at&order=created_at.asc`);
+  },
+
+  // Atualiza usuário
+  updateUser: async (userId, patch) => {
+    return await sbFetch(`users?id=eq.${userId}`, "PATCH", patch);
+  },
+
+  // Deleta usuário
+  deleteUser: async (userId) => {
+    return await sbFetch(`users?id=eq.${userId}`, "DELETE");
+  },
+
+  // Atualiza tenant
+  updateTenant: async (tenantId, patch) => {
+    return await sbFetch(`tenants?id=eq.${tenantId}`, "PATCH", patch);
   },
 };
 
@@ -981,28 +993,20 @@ function AuthScreen({ onLogin, onShowOnboarding }) {
     if(!form.email||!form.password){setErr("Preencha todos os campos.");return;}
     setBusy(true); setErr("");
     try {
-      // Try Supabase Auth first
-      const session = await sbAuth.login(form.email, form.password);
-      const userId = session.user?.id;
-      if(userId){
-        // Get user profile and tenant from DB
-        const profile = await sbAuth.getProfile(userId);
-        if(profile){
-          const tenant = await sbAuth.getTenant(profile.tenant_id);
-          const userObj = {
-            id: userId,
-            name: profile.name,
-            email: form.email,
-            role: profile.role,
-            status: profile.status,
-            perms: profile.perms || ALL_MODULES,
-            tenant_id: profile.tenant_id,
-            tenantName: tenant?.name || "",
-          };
-          onLogin(userObj);
-          return;
-        }
-      }
+      // Query users table directly (no Supabase Auth)
+      const userRow = await sbAuth.login(form.email, form.password);
+      const tenant = userRow.tenant_id ? await sbAuth.getTenant(userRow.tenant_id) : null;
+      const userObj = {
+        id: userRow.id,
+        name: userRow.name,
+        email: userRow.email,
+        role: userRow.role,
+        status: userRow.status,
+        perms: userRow.perms || [],
+        tenant_id: userRow.tenant_id,
+        tenantName: tenant?.name || "",
+      };
+      onLogin(userObj);
     } catch(e) {
       // Supabase failed — try local DB fallback
       const u = DB.find(form.email);
@@ -4802,30 +4806,71 @@ function OwnerPanel({ webhook, onWebhookChange }) {
 
 
 // ─── MASTER ACCESS CONTROL PANEL ─────────────────────────────────────────────
-function MasterPanel() {
-  const [users,setUsers]=useState(DB.all());
+function MasterPanel({ currentUser }) {
+  const [users,setUsers]=useState([]);
   const [view,setView]=useState("list");
   const [form,setForm]=useState({name:"",email:"",password:"",role:"user"});
   const [err,setErr]=useState("");
   const [ok,setOk]=useState("");
+  const [busy,setBusy]=useState(false);
   const [confirmId,setConfirmId]=useState(null);
-  const refresh=()=>setUsers(DB.all());
+  const tenantId = currentUser?.tenant_id;
 
-  const cancelUser=(id)=>{ DB.update(id,{status:"cancelado"}); refresh(); setConfirmId(null); setOk("Acesso cancelado."); setTimeout(()=>setOk(""),3000); };
-  const reactivate=(id)=>{ DB.update(id,{status:"ativo"}); refresh(); setOk("Usuário reativado."); setTimeout(()=>setOk(""),3000); };
-  const resetPwd=(id)=>{ DB.update(id,{password:"reset2024"}); refresh(); setOk('Senha resetada para "reset2024". Oriente o usuário a alterar.'); setTimeout(()=>setOk(""),5000); };
-  const addUser=()=>{
+  const refresh = async () => {
+    if(!tenantId) return;
+    try {
+      const data = await sbAuth.getTenantUsers(tenantId);
+      setUsers(Array.isArray(data)?data:[]);
+    } catch(e) {
+      setUsers(DB.all().filter(u=>u.tenant_id===tenantId));
+    }
+  };
+  useEffect(()=>{ refresh(); },[tenantId]);
+
+  const cancelUser = async (id) => {
+    try { await sbAuth.updateUser(id,{status:"cancelado"}); } catch(e) { DB.update(id,{status:"cancelado"}); }
+    setConfirmId(null); setOk("Acesso cancelado."); refresh(); setTimeout(()=>setOk(""),3000);
+  };
+  const reactivate = async (id) => {
+    try { await sbAuth.updateUser(id,{status:"ativo"}); } catch(e) { DB.update(id,{status:"ativo"}); }
+    setOk("Usuário reativado."); refresh(); setTimeout(()=>setOk(""),3000);
+  };
+  const resetPwd = async (id) => {
+    try { await sbAuth.updateUser(id,{password:"reset2024"}); } catch(e) { DB.update(id,{password:"reset2024"}); }
+    setOk('Senha resetada para "reset2024". Avise o usuário para alterar.'); refresh(); setTimeout(()=>setOk(""),5000);
+  };
+  const deleteUser = async (id) => {
+    try { await sbAuth.deleteUser(id); } catch(e) { DB.update(id,{status:"cancelado"}); }
+    setConfirmId(null); setOk("Usuário excluído."); refresh(); setTimeout(()=>setOk(""),3000);
+  };
+  const addUser = async () => {
     setErr("");
     if(!form.name||!form.email||!form.password){setErr("Preencha todos os campos.");return;}
     if(!/\S+@\S+\.\S+/.test(form.email)){setErr("E-mail inválido.");return;}
-    if(DB.find(form.email)){setErr("E-mail já cadastrado.");return;}
-    const nu={id:"u_"+Date.now(),name:form.name,email:form.email,password:form.password,role:form.role,status:"ativo",createdAt:new Date().toLocaleDateString("pt-BR"),lastLogin:null};
-    DB.add(nu); refresh();
-    setOk(`Usuário ${form.name} cadastrado!`); setForm({name:"",email:"",password:"",role:"user"}); setView("list");
-    setTimeout(()=>setOk(""),4000);
+    if(form.password.length<6){setErr("Senha mínima: 6 caracteres.");return;}
+    setBusy(true);
+    try {
+      await sbAuth.createUser({
+        name: form.name,
+        email: form.email,
+        password: form.password,
+        role: form.role,
+        tenant_id: tenantId,
+        status: "ativo",
+      });
+      setOk(`Usuário ${form.name} cadastrado!`);
+      setForm({name:"",email:"",password:"",role:"user"});
+      setView("list");
+      refresh();
+      setTimeout(()=>setOk(""),4000);
+    } catch(e) {
+      setErr(e.message||"Erro ao cadastrar usuário.");
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const stats={total:users.length,ativos:users.filter(u=>u.status==="ativo").length,cancelados:users.filter(u=>u.status==="cancelado").length,masters:users.filter(u=>u.role==="master").length};
+  const stats={total:users.length,ativos:users.filter(u=>u.status==="ativo").length,cancelados:users.filter(u=>u.status==="cancelado").length,admins:users.filter(u=>u.role==="admin").length};
   const gold="#F59E0B";
   const th={textAlign:"left",padding:"10px 16px",fontSize:10,color:C.muted,letterSpacing:1.2,textTransform:"uppercase",fontWeight:700,borderBottom:("1px solid "+C.border)};
   const td={padding:"11px 16px",borderBottom:("1px solid "+C.panel),verticalAlign:"middle"};
@@ -4837,7 +4882,7 @@ function MasterPanel() {
         <div style={{position:"fixed",inset:0,zIndex:700,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(6,14,28,0.9)",backdropFilter:"blur(4px)"}} onClick={()=>setConfirmId(null)}>
           <div style={{background:C.panel,border:"1px solid #F8717166",borderRadius:16,padding:28,width:400,boxShadow:"0 24px 64px rgba(0,0,0,0.7)"}} onClick={e=>e.stopPropagation()}>
             <div style={{fontSize:16,fontWeight:800,color:"#F87171",marginBottom:8}}>⚠️ Cancelar Acesso</div>
-            <div style={{fontSize:13,color:C.dim,marginBottom:20}}>Cancelar acesso de <strong style={{color:C.text}}>{DB.findById(confirmId)?.name}</strong>? O usuário não poderá mais fazer login.</div>
+            <div style={{fontSize:13,color:C.dim,marginBottom:20}}>Cancelar acesso de <strong style={{color:C.text}}>{users.find(u=>u.id===confirmId)?.name}</strong>? O usuário não poderá mais fazer login.</div>
             <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
               <button style={btnG} onClick={()=>setConfirmId(null)}>Não, voltar</button>
               <button style={{...btnD,padding:"9px 18px",fontSize:13,fontWeight:700}} onClick={()=>cancelUser(confirmId)}>Sim, cancelar</button>
@@ -4862,7 +4907,7 @@ function MasterPanel() {
 
       {/* KPIs */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14,marginBottom:22}}>
-        {[["Total",stats.total,C.accent],["Ativos",stats.ativos,"#4ADE80"],["Cancelados",stats.cancelados,"#F87171"],["Masters",stats.masters,gold]].map(([l,v,c])=>(
+        {[["Total",stats.total,C.accent],["Ativos",stats.ativos,"#4ADE80"],["Cancelados",stats.cancelados,"#F87171"],["Admins",stats.admins,gold]].map(([l,v,c])=>(
           <div key={l} style={card()}><div style={{fontSize:26,fontWeight:800,color:c,lineHeight:1}}>{v}</div><div style={{fontSize:11,color:C.muted,letterSpacing:1.2,textTransform:"uppercase",marginTop:4}}>{l}</div></div>
         ))}
       </div>
@@ -4880,13 +4925,13 @@ function MasterPanel() {
             <div><label style={lbl}>Nível de Acesso</label>
               <select style={inp} value={form.role} onChange={e=>setForm(f=>({...f,role:e.target.value}))}>
                 <option value="user">👤 Usuário Padrão</option>
-                <option value="master">★ Master</option>
+                <option value="admin">★ Admin</option>
               </select>
             </div>
           </div>
           {err&&<div style={{background:"rgba(248,113,113,0.1)",border:"1px solid #F8717133",borderRadius:8,padding:"8px 12px",color:"#F87171",fontSize:12,marginBottom:12}}>⚠️ {err}</div>}
           <div style={{display:"flex",gap:10}}>
-            <button style={{...btnP,background:("linear-gradient(135deg,"+gold+",#D97706)")}} onClick={addUser}><Icon d={IC.check} size={14} color="#fff"/>Cadastrar</button>
+            <button style={{...btnP,background:("linear-gradient(135deg,"+gold+",#D97706)"),opacity:busy?0.7:1}} onClick={addUser} disabled={busy}><Icon d={IC.check} size={14} color="#fff"/>{busy?"Salvando...":"Cadastrar"}</button>
             <button style={btnG} onClick={()=>{setView("list");setErr("");}}>Cancelar</button>
           </div>
         </div>
@@ -4895,51 +4940,51 @@ function MasterPanel() {
       {/* User table */}
       {view==="list"&&(
         <div style={card({padding:0,overflow:"hidden"})}>
-          <table style={{width:"100%",borderCollapse:"collapse"}}>
-            <thead><tr style={{background:C.sidebar}}>{["Usuário","E-mail","Nível","Status","Cadastro","Último Acesso","Ações"].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
-            <tbody>
-              {users.map((u,i)=>(
-                <tr key={u.id} style={{background:i%2===0?"transparent":"rgba(255,255,255,0.01)"}}>
-                  <td style={td}>
-                    <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <div style={{width:32,height:32,borderRadius:8,background:u.role==="master"?("linear-gradient(135deg,"+gold+",#D97706)"):("linear-gradient(135deg,"+C.accent+","+C.accent2+")"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,color:"#fff",flexShrink:0}}>{u.name[0]}</div>
-                      <div>
-                        <div style={{fontSize:12,fontWeight:700,color:C.text}}>{u.name}</div>
-                        {u.role==="master"&&<div style={{fontSize:10,color:gold,fontWeight:700}}>★ Master</div>}
-                      </div>
-                    </div>
-                  </td>
-                  <td style={{...td,fontSize:12,color:C.dim}}>{u.email}</td>
-                  <td style={td}>
-                    <span style={{fontSize:11,fontWeight:700,color:u.role==="master"?gold:C.accent,background:u.role==="master"?(gold+"18"):(C.accent+"14"),border:("1px solid "+u.role==="master"?gold+"44":C.accent+"33"),padding:"3px 10px",borderRadius:20}}>
-                      {u.role==="master"?"★ Master":"👤 Padrão"}
-                    </span>
-                  </td>
-                  <td style={td}>
-                    <span style={{fontSize:11,fontWeight:700,color:u.status==="ativo"?"#4ADE80":"#F87171",background:u.status==="ativo"?"rgba(74,222,128,0.12)":"rgba(248,113,113,0.12)",border:("1px solid "+u.status==="ativo"?"#4ADE8033":"#F8717133"),padding:"3px 10px",borderRadius:20}}>
-                      {u.status==="ativo"?"● Ativo":"✕ Cancelado"}
-                    </span>
-                  </td>
-                  <td style={{...td,fontSize:11,color:C.faint}}>{u.createdAt}</td>
-                  <td style={{...td,fontSize:11,color:C.faint}}>{u.lastLogin||"-"}</td>
-                  <td style={td}>
-                    {u.role==="master"
-                      ? <span style={{fontSize:11,color:C.faint,fontStyle:"italic"}}>Protegido</span>
-                      : <div style={{display:"flex",gap:6}}>
-                          {u.status==="ativo"
-                            ? <>
-                                <button onClick={()=>resetPwd(u.id)} style={{...btnG,padding:"5px 10px",fontSize:11}}>🔑 Reset</button>
-                                <button onClick={()=>setConfirmId(u.id)} style={{...btnD,padding:"5px 10px",fontSize:11}}>✕ Cancelar</button>
-                              </>
-                            : <button onClick={()=>reactivate(u.id)} style={{display:"inline-flex",alignItems:"center",gap:5,padding:"5px 12px",borderRadius:8,border:"1px solid #4ADE8033",background:"rgba(74,222,128,0.1)",color:"#4ADE80",fontSize:11,fontWeight:600,cursor:"pointer"}}>✓ Reativar</button>
-                          }
+          {users.length===0
+            ? <div style={{padding:40,textAlign:"center",color:C.faint,fontSize:13}}>Nenhum usuário cadastrado nesta empresa ainda.</div>
+            : <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead><tr style={{background:C.sidebar}}>{["Usuário","E-mail","Nível","Status","Cadastro","Ações"].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {users.map((u,i)=>(
+                    <tr key={u.id} style={{background:i%2===0?"transparent":"rgba(255,255,255,0.01)"}}>
+                      <td style={td}>
+                        <div style={{display:"flex",alignItems:"center",gap:10}}>
+                          <div style={{width:32,height:32,borderRadius:8,background:u.role==="admin"?("linear-gradient(135deg,"+gold+",#D97706)"):("linear-gradient(135deg,"+C.accent+","+C.accent2+")"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,color:"#fff",flexShrink:0}}>{(u.name||"?")[0]}</div>
+                          <div>
+                            <div style={{fontSize:12,fontWeight:700,color:C.text}}>{u.name}</div>
+                            {u.role==="admin"&&<div style={{fontSize:10,color:gold,fontWeight:700}}>★ Admin</div>}
+                          </div>
                         </div>
-                    }
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                      </td>
+                      <td style={{...td,fontSize:12,color:C.dim}}>{u.email}</td>
+                      <td style={td}>
+                        <span style={{fontSize:11,fontWeight:700,color:u.role==="admin"?gold:C.accent,background:u.role==="admin"?(gold+"18"):(C.accent+"14"),padding:"3px 10px",borderRadius:20}}>
+                          {u.role==="admin"?"★ Admin":"👤 Padrão"}
+                        </span>
+                      </td>
+                      <td style={td}>
+                        <span style={{fontSize:11,fontWeight:700,color:u.status==="ativo"?"#4ADE80":"#F87171",background:u.status==="ativo"?"rgba(74,222,128,0.12)":"rgba(248,113,113,0.12)",padding:"3px 10px",borderRadius:20}}>
+                          {u.status==="ativo"?"● Ativo":"✕ Cancelado"}
+                        </span>
+                      </td>
+                      <td style={{...td,fontSize:11,color:C.faint}}>{u.created_at?new Date(u.created_at).toLocaleDateString("pt-BR"):"-"}</td>
+                      <td style={td}>
+                        {u.role==="owner"
+                          ? <span style={{fontSize:11,color:C.faint,fontStyle:"italic"}}>Protegido</span>
+                          : <div style={{display:"flex",gap:6}}>
+                              <button onClick={()=>resetPwd(u.id)} style={{...btnG,padding:"5px 10px",fontSize:11}}>🔑 Reset</button>
+                              {u.status==="ativo"
+                                ? <button onClick={()=>setConfirmId(u.id)} style={{...btnD,padding:"5px 10px",fontSize:11}}>✕ Cancelar</button>
+                                : <button onClick={()=>reactivate(u.id)} style={{display:"inline-flex",alignItems:"center",gap:5,padding:"5px 12px",borderRadius:8,border:"1px solid #4ADE8033",background:"rgba(74,222,128,0.1)",color:"#4ADE80",fontSize:11,fontWeight:600,cursor:"pointer"}}>✓ Reativar</button>
+                              }
+                            </div>
+                        }
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+          }
         </div>
       )}
     </div>
@@ -6288,7 +6333,7 @@ function SuperAdminPanel({ currentUser }) {
       users: [],
     };
     try {
-      const data = await adm("tenants", "POST", {
+      const data = await sbAuth.createTenant({
         name: form.name,
         slug,
         plan: form.plan,
@@ -6296,7 +6341,7 @@ function SuperAdminPanel({ currentUser }) {
         modules: JSON.stringify(form.modules),
         config: JSON.stringify({ quota: 100, permissions: {} }),
       });
-      if(data&&data[0]) newTenant.id = data[0].id;
+      if(data&&data.id) newTenant.id = data.id;
     } catch(e) {
       // Supabase retornou erro — registra mas cria localmente mesmo assim
       console.warn("Supabase createTenant error:", e.message);
@@ -6672,7 +6717,7 @@ export default function App() {
     if(pg==="reativacao") return <Reativacao leads={leads} onUpdateLead={updateLead} onSetPage={setPage}/>;
     if(pg==="suporte")    return <Suporte leads={leads} onUpdateLead={updateLead} currentUser={user}/>;
     if(pg==="settings") return <Settings user={user}/>;
-    if(pg==="master") return <MasterPanel/>;
+    if(pg==="master") return <MasterPanel currentUser={user}/>;
     if(pg==="super_admin") return <SuperAdminPanel currentUser={user}/>;
     return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} users={DB.all()||[]} currentUser={user} isMaster={isMaster}/>;
   };
