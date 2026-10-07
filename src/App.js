@@ -53,10 +53,20 @@ const sbFetch = async (path, method="GET", body=null) => {
     mode: "cors",
   };
   if(body) opts.body = JSON.stringify(body);
-  const res = await fetch(SB_URL+"/rest/v1/"+path, opts);
-  const text = await res.text();
-  const parsed = text ? JSON.parse(text) : null;
-  if(!res.ok) throw new Error(parsed?.message||parsed?.error||"Erro "+res.status);
+  let res, text, parsed;
+  try {
+    res = await fetch(SB_URL+"/rest/v1/"+path, opts);
+    text = await res.text();
+    parsed = text ? JSON.parse(text) : null;
+  } catch(e) {
+    throw new Error("Falha de rede: "+e.message);
+  }
+  if(!res.ok) {
+    // Extrai mensagem de erro do Supabase no formato correto
+    const msg = parsed?.message || parsed?.error || parsed?.hint || (typeof parsed==="string"?parsed:"") || ("HTTP "+res.status);
+    console.error("sbFetch error", method, path, res.status, parsed);
+    throw new Error(msg);
+  }
   return parsed;
 };
 
@@ -4880,7 +4890,8 @@ function MasterPanel({ currentUser }) {
       refresh();
       setTimeout(()=>setOk(""),4000);
     } catch(e) {
-      setErr(e.message||"Erro ao cadastrar usuário.");
+      console.error("addUser error:", e);
+      setErr("Erro ao cadastrar: "+(e.message||"verifique o console"));
     } finally {
       setBusy(false);
     }
