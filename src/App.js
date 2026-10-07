@@ -334,6 +334,38 @@ const pill = (s) => { const c=getStatusColor(s)||C.dim; return { display:"inline
 // All available module IDs
 const ALL_MODULES = ["dashboard","profile","search","addlead","messages","whatsapp","crm","funil","metas","cadencia","receptivo","pos_venda","reativacao","suporte","settings","master","super_admin"];
 const DEFAULT_USER_PERMS = ["dashboard","profile","search","addlead","messages","whatsapp","crm","funil","metas","settings"];
+
+// ─── PERMISSIONS SCHEMA ──────────────────────────────────────────────────────
+const PERMISSIONS_SCHEMA = {
+  dashboard:  { label:"Dashboard",         items:{ view:{label:"Ver dashboard"} } },
+  profile:    { label:"Perfil da Empresa", items:{ view:{label:"Ver perfil"}, edit:{label:"Editar perfil"} } },
+  addlead:    { label:"Cadastrar Empresa", items:{ view:{label:"Ver tela"}, create:{label:"Cadastrar"} } },
+  search:     { label:"Busca de Leads",    items:{ view:{label:"Ver tela"}, search:{label:"Buscar leads"}, add_found:{label:"Adicionar lead encontrado"} }, quota:true },
+  crm:        { label:"CRM",               items:{ view:{label:"Ver leads"}, edit:{label:"Editar lead"}, delete:{label:"Excluir lead"}, move:{label:"Mover no funil"}, history:{label:"Ver historico"}, acionar:{label:"Acionar lead"} } },
+  funil:      { label:"Funil de Vendas",   items:{ view:{label:"Ver funil"}, move:{label:"Mover etapas"}, config:{label:"Configurar etapas"} } },
+  messages:   { label:"Mensagens",         items:{ view:{label:"Ver mensagens"}, send:{label:"Enviar mensagem"} } },
+  whatsapp:   { label:"WhatsApp",          items:{ view:{label:"Ver tela"}, send:{label:"Enviar mensagem"}, bulk:{label:"Disparar em lote"} } },
+  cadencia:   { label:"Cadencias",         items:{ view:{label:"Ver cadencias"}, create:{label:"Criar cadencia"}, edit:{label:"Editar cadencia"}, apply:{label:"Aplicar cadencia"}, auto:{label:"Disparar automatico"} } },
+  metas:      { label:"Metas",             items:{ view:{label:"Ver metas"}, create:{label:"Criar meta"}, edit:{label:"Editar meta"} } },
+  receptivo:  { label:"Receptivo",         items:{ view:{label:"Ver leads"}, kanban:{label:"Visualizacao Kanban"}, by_channel:{label:"Por canal"}, acionar:{label:"Acionar lead"} } },
+  pos_venda:  { label:"Pos-venda",         items:{ view:{label:"Ver clientes"}, schedule:{label:"Agendar acionamento"}, import_csv:{label:"Importar CSV"}, update_status:{label:"Atualizar status"} } },
+  reativacao: { label:"Reativacao",        items:{ view:{label:"Ver leads frios"}, acionar:{label:"Acionar reativacao"} } },
+  suporte:    { label:"Suporte",           items:{ view:{label:"Ver tickets"}, create:{label:"Criar ticket"}, close:{label:"Fechar ticket"} } },
+  settings:   { label:"Configuracoes",     items:{ view:{label:"Ver configuracoes"}, funil_config:{label:"Configurar funil"}, segments:{label:"Segmentos"} } },
+  master:     { label:"Controle de Acesso",items:{ view:{label:"Ver usuarios"}, create_user:{label:"Criar usuario"}, edit_user:{label:"Editar usuario"}, reset_password:{label:"Resetar senha"}, permissions:{label:"Gerenciar permissoes"} } },
+};
+
+const getAllModPerms = (modId) => Object.keys(PERMISSIONS_SCHEMA[modId]?.items||{});
+const hasPermission = (user, tenantCfg, mod, action) => {
+  if(!user) return false;
+  if(user.role==="owner") return true;
+  const tp = tenantCfg?.permissions?.[mod];
+  if(!tp || !tp.items?.includes(action)) return false;
+  if(user.role==="admin") return true;
+  const up = user.perms_v2?.[mod];
+  return Array.isArray(up) && up.includes(action);
+};
+
 const DEFAULT_MASTER_PERMS = [...ALL_MODULES]; // master sees everything including master panel
 
 
@@ -639,7 +671,7 @@ const sbAuth = {
 // Keep USER_DB as fallback for offline/demo mode
 const USER_DB = [
   { id:"owner", name:"Owner",  email:"owner@pipetm.com.br",  password:"owner2024",  role:"owner",  status:"ativo", createdAt:"2026-01-01", lastLogin:null, perms:ALL_MODULES },
-  { id:"master", name:"Master", email:"master@pipetm.com.br", password:"master2024", role:"master", status:"ativo", createdAt:"2026-01-01", lastLogin:null, perms:DEFAULT_MASTER_PERMS },
+  { id:"master", name:"Master", email:"master@pipetm.com.br", password:"master2024", role:"admin", status:"ativo", createdAt:"2026-01-01", lastLogin:null, perms:ALL_MODULES },
   { id:"admin1", name:"Admin",  email:"admin@pipetm.com.br",  password:"opme2024",   role:"user",   status:"ativo", createdAt:"2026-01-01", lastLogin:null, perms:DEFAULT_USER_PERMS },
 ];
 
@@ -1853,7 +1885,7 @@ function SearchLeads({onLeadsFound, existingLeads=[], profile={}, currentUser=nu
       cidade: city,
       quantidade: parseInt(qty)||10,
       tenant_id: currentUser?.tenant_id||"",
-      user_id: currentUser?.id||"",
+      user_id: currentUser?.id&&/^[0-9a-f-]{36}$/.test(currentUser.id)?currentUser.id:null,
     };
 
     try {
@@ -5387,7 +5419,7 @@ function Suporte({ leads, onUpdateLead, currentUser }) {
       prioridade: form.prioridade,
       canal: form.canal,
       status: "Aberto",
-      user_id: currentUser?.id,
+      user_id: currentUser?.id&&/^[0-9a-f-]{36}$/.test(currentUser.id)?currentUser.id:null,
       user_name: currentUser?.name||"Usuário",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -5626,7 +5658,7 @@ function PosVenda({ currentUser }) {
           data_agendamento: item.data_agendamento,
           vendedor: item.vendedor||null,
           tenant_id: tenantId,
-          user_id: currentUser?.id||null,
+          user_id: currentUser?.id&&/^[0-9a-f-]{36}$/.test(currentUser.id)?currentUser.id:null,
           status: "pendente",
         });
       }
@@ -6107,12 +6139,215 @@ function WebhooksConfig({ tenants, onSaved }) {
   );
 }
 
+
+function ModulosConfig({ tenants, onSaved, onReload }) {
+  const [selTenant, setSelTenant]   = useState(tenants[0]?.id||"");
+  const [permissions, setPerms]     = useState({});
+  const [quota, setQuota]           = useState(100);
+  const [loading, setLoading]       = useState(false);
+  const [saved, setSaved]           = useState(false);
+  const [expanded, setExpanded]     = useState({});
+
+  // Load permissions when tenant changes
+  useEffect(()=>{
+    if(!selTenant) return;
+    const t = tenants.find(t=>t.id===selTenant);
+    if(!t) return;
+    try {
+      const cfg = typeof t.config==="string"?JSON.parse(t.config||"{}"):( t.config||{});
+      const p = cfg.permissions||{};
+      // If no permissions saved yet, default to all enabled
+      if(Object.keys(p).length===0){
+        const defaultPerms = {};
+        Object.keys(PERMISSIONS_SCHEMA).forEach(mod=>{
+          defaultPerms[mod]={enabled:true,items:getAllModPerms(mod)};
+        });
+        setPerms(defaultPerms);
+      } else {
+        setPerms(p);
+      }
+      setQuota(cfg.search_quota||100);
+    } catch(e){ setPerms({}); }
+  },[selTenant, tenants]);
+
+  const isModEnabled = (mod) => permissions[mod]?.enabled===true;
+  const isItemEnabled = (mod, item) => permissions[mod]?.items?.includes(item);
+
+  const toggleMod = (mod) => {
+    setPerms(prev=>{
+      const current = prev[mod]||{enabled:false,items:[]};
+      const nowEnabled = !current.enabled;
+      return {...prev,[mod]:{
+        enabled: nowEnabled,
+        items: nowEnabled ? getAllModPerms(mod) : []
+      }};
+    });
+  };
+
+  const toggleItem = (mod, item) => {
+    setPerms(prev=>{
+      const current = prev[mod]||{enabled:true,items:[]};
+      const items = current.items||[];
+      const newItems = items.includes(item) ? items.filter(i=>i!==item) : [...items,item];
+      return {...prev,[mod]:{...current,items:newItems,enabled:newItems.length>0}};
+    });
+  };
+
+  const toggleExpand = (mod) => setExpanded(e=>({...e,[mod]:!e[mod]}));
+
+  const enableAll = () => {
+    const all = {};
+    Object.keys(PERMISSIONS_SCHEMA).forEach(mod=>{
+      all[mod]={enabled:true,items:getAllModPerms(mod)};
+    });
+    setPerms(all);
+  };
+
+  const disableAll = () => {
+    const none = {};
+    Object.keys(PERMISSIONS_SCHEMA).forEach(mod=>{ none[mod]={enabled:false,items:[]}; });
+    setPerms(none);
+  };
+
+  const savePermissions = async () => {
+    if(!selTenant) return;
+    setLoading(true);
+    try {
+      const t = tenants.find(t=>t.id===selTenant);
+      const existingCfg = typeof t?.config==="string"?JSON.parse(t?.config||"{}"):( t?.config||{});
+      await sbFetch("tenants?id=eq."+selTenant,"PATCH",{
+        config: JSON.stringify({...existingCfg, permissions, search_quota:quota})
+      });
+      setSaved(true); setTimeout(()=>setSaved(false),2500);
+      if(onSaved) onSaved("Permissoes salvas para "+t?.name);
+      if(onReload) onReload();
+    } catch(e){ alert("Erro ao salvar: "+e.message); }
+    finally { setLoading(false); }
+  };
+
+  const currentTenant = tenants.find(t=>t.id===selTenant);
+  const enabledMods = Object.values(permissions).filter(p=>p.enabled).length;
+  const totalMods = Object.keys(PERMISSIONS_SCHEMA).length;
+
+  return (
+    <div>
+      <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:4}}>Permissoes por Empresa</div>
+      <div style={{fontSize:12,color:C.muted,marginBottom:20}}>Configure o que cada empresa pode acessar. O admin da empresa controla o acesso individual dos vendedores dentro dessas permissoes.</div>
+
+      {/* Seletor */}
+      <div style={{...card({padding:16}),marginBottom:16}}>
+        <div style={lbl}>Empresa</div>
+        <select value={selTenant} onChange={e=>setSelTenant(e.target.value)} style={inp}>
+          <option value="">Selecione...</option>
+          {tenants.map(t=>(<option key={t.id} value={t.id}>{t.name}</option>))}
+        </select>
+      </div>
+
+      {selTenant&&(
+        <div>
+          {/* Cota de busca */}
+          <div style={{...card({padding:16}),marginBottom:16,borderLeft:"3px solid "+C.accent}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:700,color:C.text}}>Cota mensal de Busca de Leads</div>
+                <div style={{fontSize:11,color:C.faint}}>Numero maximo de buscas por mes</div>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <input type="number" min="0" max="9999" value={quota}
+                  onChange={e=>setQuota(Number(e.target.value))}
+                  style={{...inp,width:90,textAlign:"center",fontWeight:700,fontSize:16}}/>
+                <div style={{fontSize:11,color:C.muted}}>buscas/mes</div>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {[50,100,200,500,1000].map(v=>(
+                <button key={v} onClick={()=>setQuota(v)}
+                  style={{padding:"4px 12px",borderRadius:20,border:"1px solid "+(quota===v?C.accent:C.border),background:quota===v?(C.accent+"18"):"transparent",color:quota===v?C.accent:C.muted,fontSize:11,cursor:"pointer"}}>
+                  {v}
+                </button>
+              ))}
+              <button onClick={()=>setQuota(0)}
+                style={{padding:"4px 12px",borderRadius:20,border:"1px solid "+(quota===0?"#F87171":C.border),background:quota===0?"rgba(248,113,113,0.1)":"transparent",color:quota===0?"#F87171":C.muted,fontSize:11,cursor:"pointer"}}>
+                Ilimitado (0)
+              </button>
+            </div>
+          </div>
+
+          {/* Acoes rapidas */}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <div style={{fontSize:12,color:C.muted}}>{enabledMods}/{totalMods} modulos habilitados</div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={enableAll} style={{...btnG,padding:"5px 14px",fontSize:11}}>Habilitar tudo</button>
+              <button onClick={disableAll} style={{...btnG,padding:"5px 14px",fontSize:11}}>Desabilitar tudo</button>
+            </div>
+          </div>
+
+          {/* Lista de modulos com sub-itens */}
+          <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
+            {Object.entries(PERMISSIONS_SCHEMA).map(([modId,modDef])=>{
+              const modOn = isModEnabled(modId);
+              const items = Object.entries(modDef.items||{});
+              const isExp = expanded[modId];
+              const enabledItems = items.filter(([k])=>isItemEnabled(modId,k)).length;
+              return (
+                <div key={modId} style={{borderRadius:10,border:"1px solid "+(modOn?C.accent:C.border),overflow:"hidden",transition:"border-color 0.2s"}}>
+                  {/* Header do modulo */}
+                  <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",background:modOn?(C.accent+"08"):"transparent"}}>
+                    <div style={{flex:1,cursor:"pointer"}} onClick={()=>items.length>1&&toggleExpand(modId)}>
+                      <div style={{fontSize:13,fontWeight:700,color:modOn?C.text:C.muted,display:"flex",alignItems:"center",gap:8}}>
+                        {modDef.label}
+                        {items.length>1&&<span style={{fontSize:10,color:C.faint,fontWeight:400}}>{enabledItems}/{items.length} funcoes</span>}
+                        {items.length>1&&<span style={{fontSize:10,color:C.faint,marginLeft:"auto"}}>{isExp?"▲":"▼"}</span>}
+                      </div>
+                    </div>
+                    {/* Toggle do modulo */}
+                    <div onClick={()=>toggleMod(modId)} style={{width:42,height:24,borderRadius:12,background:modOn?C.accent:C.border,position:"relative",transition:"background 0.2s",flexShrink:0,cursor:"pointer"}}>
+                      <div style={{width:18,height:18,borderRadius:"50%",background:"#fff",position:"absolute",top:3,left:modOn?21:3,transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)"}}/>
+                    </div>
+                  </div>
+                  {/* Sub-itens expandidos */}
+                  {isExp&&modOn&&(
+                    <div style={{borderTop:"1px solid "+C.border}}>
+                      {items.map(([itemId,itemDef])=>{
+                        const itemOn = isItemEnabled(modId,itemId);
+                        return (
+                          <div key={itemId} onClick={()=>toggleItem(modId,itemId)}
+                            style={{display:"flex",alignItems:"center",gap:12,padding:"9px 20px",borderBottom:"1px solid "+C.border+"44",cursor:"pointer",background:itemOn?"transparent":"rgba(248,113,113,0.03)"}}
+                            onMouseEnter={e=>e.currentTarget.style.background=C.accent+"06"}
+                            onMouseLeave={e=>e.currentTarget.style.background=itemOn?"transparent":"rgba(248,113,113,0.03)"}>
+                            <div style={{flex:1,fontSize:12,color:itemOn?C.text:C.faint}}>{itemDef.label}</div>
+                            <div style={{width:34,height:18,borderRadius:9,background:itemOn?C.accent:C.border,position:"relative",transition:"background 0.2s",flexShrink:0}}>
+                              <div style={{width:14,height:14,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:itemOn?17:2,transition:"left 0.2s",boxShadow:"0 1px 2px rgba(0,0,0,0.2)"}}/>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {saved&&<div style={{marginBottom:12,padding:"10px 14px",background:"rgba(74,222,128,0.1)",border:"1px solid #4ADE80",borderRadius:8,fontSize:12,color:"#4ADE80",fontWeight:700}}>Permissoes salvas com sucesso!</div>}
+
+          <button onClick={savePermissions} disabled={loading}
+            style={{...btnP,width:"100%",padding:"12px",fontSize:13,fontWeight:700,opacity:loading?0.7:1}}>
+            {loading?"Salvando...":"Salvar Permissoes — "+currentTenant?.name}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SuperAdminPanel({ currentUser }) {
   const [tab, setTab]           = useState("tenants");
   const [tenants, setTenants]   = useState([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState("");
   const [showNew, setShowNew]   = useState(false);
+  const [selTenant, setSelTenant] = useState(null); // tenant selecionado para configurar módulos
   const [saved, setSaved]       = useState("");
   const [form, setForm]         = useState({
     name:"", slug:"", plan:"basic", modules:["prospeccao"]
@@ -6137,13 +6372,21 @@ function SuperAdminPanel({ currentUser }) {
     return text ? JSON.parse(text) : null;
   };
 
+  const MOCK_TENANTS = [
+    {id:"072b33d2-46ff-4bf2-839b-ee5d33fe6cb7",name:"TM Solucoes Comerciais",slug:"tm-solucoes",status:"active",plan:"pro",config:"{}",users:[]},
+  ];
+
   const loadTenants = async () => {
     setLoading(true);
     try {
       const data = await adm("tenants?select=*,users(id,name,role,status)&order=created_at.desc");
-      setTenants(Array.isArray(data)?data:[]);
+      if(Array.isArray(data)&&data.length>0){ setTenants(data); }
+      else { setTenants(MOCK_TENANTS); }
+      setError("");
     } catch(e) {
-      setError("Erro ao carregar tenants: "+e.message);
+      // Fallback para mock quando offline (teste local sem Supabase)
+      setTenants(MOCK_TENANTS);
+      setError("Modo offline: usando dados locais. Deploy no Vercel para dados reais.");
     } finally {
       setLoading(false);
     }
@@ -6210,7 +6453,7 @@ function SuperAdminPanel({ currentUser }) {
 
       {/* Tabs */}
       <div style={{display:"flex",gap:6,marginBottom:20}}>
-        {[["tenants","Empresas"],["webhooks","Webhooks N8N"]].map(([v,l])=>(
+        {[["tenants","Empresas"],["modulos","Módulos"],["webhooks","Webhooks N8N"]].map(([v,l])=>(
           <button key={v} onClick={()=>setTab(v)}
             style={{padding:"8px 18px",borderRadius:8,border:"1px solid "+(tab===v?C.accent:C.border),background:tab===v?(C.accent+"18"):"transparent",color:tab===v?C.accent:C.muted,fontSize:12,fontWeight:tab===v?700:400,cursor:"pointer"}}>
             {l}
@@ -6321,6 +6564,10 @@ function SuperAdminPanel({ currentUser }) {
       </div>
       )}
 
+      {tab==="modulos"&&(
+        <ModulosConfig tenants={tenants} onSaved={(msg)=>{setSaved(msg);setTimeout(()=>setSaved(""),3000);}} onReload={loadTenants}/>
+      )}
+
       {tab==="webhooks"&&(
         <WebhooksConfig tenants={tenants} onSaved={(msg)=>{setSaved(msg);setTimeout(()=>setSaved(""),3000);}}/>
       )}
@@ -6389,6 +6636,7 @@ export default function App() {
   const [profile,setProfile]=useState(DEFAULT_PROFILE);
   const [ownerWebhook,setOwnerWebhook]=useState("https://seu-n8n.app.n8n.cloud/webhook/pipe-tm");
   const [ownerWebhooks,setOwnerWebhooks]=useState({busca_leads:"",pos_resposta:""});
+  const [tenantModules,setTenantModules]=useState(null); // null = all modules allowed
 
   const [leads,setLeads]=useState([]);
   const [sbLoading,setSbLoading]=useState(true);
@@ -6416,7 +6664,11 @@ export default function App() {
         setLeads(srcLeads.map(l=>({...l,funilStage:firstStage,status:l.status||firstName})));
       };
       try {
-        if(user?.tenant_id){ try { const t=await sbFetch("tenants?id=eq."+user.tenant_id+"&select=config"); if(t&&t[0]?.config){ const cfg=typeof t[0].config==="string"?JSON.parse(t[0].config):t[0].config; if(cfg.webhooks) setOwnerWebhooks(w=>({...w,...cfg.webhooks})); } } catch(e){ console.warn(e); } }
+        if(user?.tenant_id){ try { const t=await sbFetch("tenants?id=eq."+user.tenant_id+"&select=config"); if(t&&t[0]?.config){ const cfg=typeof t[0].config==="string"?JSON.parse(t[0].config):t[0].config; if(cfg.webhooks) setOwnerWebhooks(w=>({...w,...cfg.webhooks}));
+              if(cfg.modules && cfg.modules.length>0) {
+                // Apply tenant modules - filter ALL_MODULES to only enabled ones
+                setTenantModules(cfg.modules);
+              } } } catch(e){ console.warn(e); } }
         const rows = await sbGetLeads(user?.tenant_id); // loads all modules
         if(rows && rows.length > 0){
           rows.forEach(r=>{ setLeadStage(r.id, r.funil_stage||firstStage); });
@@ -6469,13 +6721,17 @@ export default function App() {
   const hasAccess = (mod) => {
     if(!user) return false;
     // super_admin tab only for super_admin role
-    if(mod==="super_admin") return user.role==="super_admin";
-    if(user.role==="super_admin") return true;
+    if(mod==="super_admin") return user.role==="owner";
+    if(user.role==="owner") return true;
+    // Check tenant modules (what the company contracted)
+    if(tenantModules && !["profile","settings","master","super_admin"].includes(mod)) {
+      if(!tenantModules.includes(mod)) return false;
+    }
     // pos_venda only for owner and master
-    if(mod==="pos_venda") return user.role==="owner"||user.role==="master";
+    if(mod==="pos_venda") return true; // controlled by tenant modules
     if(user.role==="owner") return true;
     const u = DB.findById(user.id);
-    const perms = u?.perms || (user.role==="master"?ALL_MODULES:DEFAULT_USER_PERMS);
+    const perms = u?.perms || (user.role==="admin"?ALL_MODULES:DEFAULT_USER_PERMS);
     return perms.includes(mod);
   };
 
@@ -6541,7 +6797,7 @@ export default function App() {
     {id:"suporte",     label:"Suporte",              icon:"headset",   group:"Módulos"},
     {id:"settings", label:"Configurações",    icon:"settings",  group:"Gestão"},
     ...(isMaster?[{id:"master",label:"Controle de Acesso",icon:"shield",group:"Gestão",master:true}]:[]),
-    ...(isOwner?[]:[]),
+    ...(isOwner?[{id:"super_admin",label:"Super Admin",icon:"settings",group:"Administração"}]:[]),
   ];
   const nav = ALL_NAV.filter(n => hasAccess(n.id));
   const presentGroups = [...new Set(nav.map(n=>n.group))];
