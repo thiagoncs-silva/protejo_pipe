@@ -5852,7 +5852,6 @@ function Prospeccao({ currentUser, onAddToProsp }) {
   };
 
   const buildPayload = (data) => ({
-    id: crypto.randomUUID(),
     name: data.name||data.company||"",
     company: data.company||"",
     phone: data.phone||"",
@@ -5871,7 +5870,7 @@ function Prospeccao({ currentUser, onAddToProsp }) {
     // Chamado pelo SearchLeads ao clicar "Add à Prospecção"
     const payload = buildPayload(data);
     try {
-      const saved = await sbFetch("leads","POST",payload);
+      const saved = await sbFetch("leads","POST",payload,{"Prefer":"return=representation"});
       const newLead = Array.isArray(saved)&&saved[0] ? saved[0] : payload;
       await sbFetch("lead_stages","POST",{
         id:crypto.randomUUID(), lead_id:newLead.id, stage_id:PROSP_STAGES[0].id,
@@ -5886,7 +5885,7 @@ function Prospeccao({ currentUser, onAddToProsp }) {
     setSaving(true);
     try {
       const payload = buildPayload(form);
-      const saved = await sbFetch("leads","POST",payload);
+      const saved = await sbFetch("leads","POST",payload,{"Prefer":"return=representation"});
       const newLead = Array.isArray(saved)&&saved[0] ? saved[0] : payload;
       await sbFetch("lead_stages","POST",{
         id:crypto.randomUUID(), lead_id:newLead.id, stage_id:PROSP_STAGES[0].id,
@@ -6475,7 +6474,6 @@ function PosVenda({ currentUser }) {
       ].filter(Boolean).join(" | ");
 
       const newLead = await sbFetch("leads","POST",{
-          id: crypto.randomUUID(),
           name: item.name,
           company: item.company||null,
           phone: item.phone,
@@ -6486,7 +6484,7 @@ function PosVenda({ currentUser }) {
           module: "pos_venda",
           tenant_id: tenantId,
           created_at: new Date().toISOString(),
-        });
+        },{"Prefer":"return=representation"});
         // Registra estágio inicial
         const lead = Array.isArray(newLead)?newLead[0]:newLead;
         if(lead?.id) {
@@ -7569,7 +7567,6 @@ export default function App() {
   const addToProsp = async (data) => {
     const tenantId = user?.tenant_id || "072b33d2-46ff-4bf2-839b-ee5d33fe6cb7";
     const payload = {
-      id: crypto.randomUUID(),
       name: data.name||data.company||"",
       company: data.company||"",
       phone: data.phone||"",
@@ -7584,7 +7581,7 @@ export default function App() {
       created_at: new Date().toISOString(),
     };
     try {
-      const saved = await sbFetch("leads","POST",payload);
+      const saved = await sbFetch("leads","POST",payload,{"Prefer":"return=representation"});
       const newLead = Array.isArray(saved)&&saved[0] ? saved[0] : payload;
       await sbFetch("lead_stages","POST",{
         id:crypto.randomUUID(), lead_id:newLead.id, stage_id:PROSP_STAGES[0].id,
