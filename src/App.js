@@ -382,7 +382,9 @@ const ACTION_TYPES = [
 ];
 
 const DEFAULT_STAGES = [
-  { id:"s1", name:"Novo cliente",     color:"#3B82F6", maxDays:7,  order:0,
+  { id:"s0", name:"Aguardando",       color:"#6B7280", maxDays:30, order:0,
+    actions:[]},
+  { id:"s1", name:"Novo cliente",     color:"#3B82F6", maxDays:7,  order:1,
     actions:[
       {id:"a1",day:1,type:"whatsapp",label:"1º Contato",    msg:"Olá {nome}! Sou da OPEN Log, especializada em logística para o setor médico-hospitalar. Posso apresentar como podemos otimizar sua cadeia de suprimentos OPME?"},
       {id:"a2",day:3,type:"whatsapp",label:"Follow-up",     msg:"Olá {nome}, tudo bem? Gostaria de saber se teve a oportunidade de pensar na nossa conversa. Temos cases incríveis na área hospitalar que podem te interessar!"},
@@ -1627,12 +1629,13 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
     {label:"Agendou reunião",c:"#4ADE80"},
     {label:"Sem resposta",  c:"#F87171"},
   ];
-  const STAGE_ORDER=["Novo cliente","Conversando","Relacionamento","Reunião agendada","Montar orçamento","Não compareceu","Proposta enviada","Contratou"];
+  const STAGE_ORDER=["Aguardando","Novo cliente","Conversando","Relacionamento","Reunião agendada","Montar orçamento","Não compareceu","Proposta enviada","Contratou"];
   const stageIdx=(name)=>STAGE_ORDER.indexOf(name);
   const reachedStage=(name)=>fl.filter(l=>stageIdx(l.status)>=stageIdx(name)).length;
   const FUNIL_VISIBLE = modTab==="pos_venda"
     ? POS_VENDA_STAGES.map(s=>({label:s.label,v:fl.filter(l=>l.status===s.label).length,c:s.c}))
     : [
+        {label:"Aguardando",v:fl.filter(l=>l.status==="Aguardando").length,c:"#6B7280"},
         {label:"Novo cliente",v:reachedStage("Novo cliente"),c:"#3B82F6"},
         {label:"Conversando",v:reachedStage("Conversando"),c:"#8B5CF6"},
         {label:"Relacionamento",v:reachedStage("Relacionamento"),c:"#10B981"},
@@ -4877,6 +4880,7 @@ function MasterPanel({ currentUser }) {
     setBusy(true);
     try {
       await sbAuth.createUser({
+        id: crypto.randomUUID(),
         name: form.name,
         email: form.email,
         password: form.password,
