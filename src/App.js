@@ -41,7 +41,7 @@ const applyTenantConfig = (tenant) => {
 };
 
 
-const sbFetch = async (path, method="GET", body=null) => {
+const sbFetch = async (path, method="GET", body=null, extraHeaders={}) => {
   const opts = {
     method,
     headers: {
@@ -49,6 +49,7 @@ const sbFetch = async (path, method="GET", body=null) => {
       "Authorization": "Bearer "+SB_KEY,
       "Content-Type": "application/json",
       "Prefer": method==="POST"?"return=representation":"return=minimal",
+      ...extraHeaders,
     },
     mode: "cors",
   };
@@ -75,11 +76,14 @@ const sbGetLeads = (tenantId, module=null) => sbFetch("leads?select=*&order=crea
 const sbInsertLead = (lead) => sbFetch("leads", "POST", lead);
 const sbUpdateLead = (id, patch) => sbFetch("leads?id=eq."+id, "PATCH", patch);
 const sbDeleteLead = (id) => sbFetch("leads?id=eq."+id, "DELETE");
-const sbUpsertGoal = (goal) => sbFetch("goals", "POST", goal);
-const sbGetGoals = () => sbFetch("goals?select=*");
+const sbUpsertGoal = (goal) => sbFetch("goals", "POST", goal, {"Prefer":"resolution=merge-duplicates,return=representation"});
+const sbGetGoals = (tenantId) => sbFetch("goals?select=*"+(tenantId?"&tenant_id=eq."+tenantId:""));
 const sbGetLeadStages = () => sbFetch("lead_stages?select=*");
 const sbUpsertLeadStage = (ls) => sbFetch("lead_stages", "POST", ls);
 const sbInsertCadence = (entry) => sbFetch("cadence", "POST", entry);
+const sbGetCadencias = (tenantId) => sbFetch("cadences?select=*&order=created_at.asc"+(tenantId?"&tenant_id=eq."+tenantId:""));
+const sbUpsertCadencia = (cad) => sbFetch("cadences", "POST", cad, {"Prefer":"resolution=merge-duplicates,return=representation"});
+const sbDeleteCadencia = (id) => sbFetch("cadences?id=eq."+id, "DELETE");
 
 // Convert DB lead to app lead format
 const dbToLead = (r) => ({
@@ -1487,12 +1491,32 @@ function LeadRow({lead, extra, onSetPage}) {
 }
 
 // ─── CENTRAL DE DECISÃO ───────────────────────────────────────────────────────
-function CentralDecisao({ leads, onSetPage, onAcionar }) {
+function CentralDecisao({ leads, onSetPage, onAcionar, leadStages=[] }) {
   const [tab, setTab] = useState("acao");
   const now = Date.now();
   const dayMs = 1000*60*60*24;
+
+  // Constrói mapa lead_id → estágio mais recente a partir do Supabase ou memória
+  const latestStageMap = React.useMemo(()=>{
+    const map = {};
+    if(leadStages.length>0) {
+      leadStages.forEach(ls=>{
+        const prev = map[ls.lead_id];
+        if(!prev || new Date(ls.entered_at) > new Date(prev.entered_at)) {
+          map[ls.lead_id] = { stageId: ls.stage_id, enteredAt: ls.entered_at };
+        }
+      });
+    } else {
+      // fallback: memória local
+      leads.forEach(l=>{ const ls=getLeadStage(l.id); if(ls) map[l.id]=ls; });
+    }
+    return map;
+  }, [leadStages, leads]);
+
+  const getStage = (leadId) => latestStageMap[leadId] || null;
+
   const diasSemContato = (lead) => {
-    const ls = getLeadStage(lead.id);
+    const ls = getStage(lead.id);
     if(!ls) return 0;
     const last = lead.cadence&&lead.cadence.length>0
       ? Math.max(...lead.cadence.map(c=>new Date(c.date||c.createdAt||0).getTime()))
@@ -1553,7 +1577,8 @@ function CentralDecisao({ leads, onSetPage, onAcionar }) {
           {quentes.length===0
             ?<div style={{padding:24,textAlign:"center",color:C.muted,fontSize:13}}>Nenhum lead quente ainda.</div>
             :quentes.map(l=>{
-              const dias=getLeadStage(l.id)?Math.floor((now-new Date(getLeadStage(l.id).enteredAt).getTime())/dayMs):0;
+              const ls=getStage(l.id);
+              const dias=ls?Math.floor((now-new Date(ls.enteredAt).getTime())/dayMs):0;
               return <LeadRow key={l.id} lead={l} onSetPage={onSetPage} extra={dias+" dias na etapa - Score "+(l.score||0)}/>;
             })
           }
@@ -1601,9 +1626,19 @@ function CentralDecisao({ leads, onSetPage, onAcionar }) {
 function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isMaster=false}) {
   const [modTab, setModTab] = useState("todos"); // todos | prospeccao | receptivo | pos_venda
   const [posVendaData, setPosVendaData] = useState([]);
+  const [leadStages, setLeadStages] = useState([]); // dados reais de lead_stages
+
+  const tenantId = currentUser?.tenant_id;
+
+  // Carrega lead_stages do Supabase para montar funil real
+  useEffect(()=>{
+    if(!tenantId) return;
+    sbFetch("lead_stages?tenant_id=eq."+tenantId+"&select=lead_id,stage_id,entered_at")
+      .then(rows=>setLeadStages(Array.isArray(rows)?rows:[]))
+      .catch(()=>{});
+  },[tenantId]);
 
   // Carrega dados de pós-venda do Supabase quando seleciona a aba
-  const tenantId = currentUser?.tenant_id;
   useEffect(()=>{
     if(modTab!=="pos_venda"&&modTab!=="todos") return;
     if(!tenantId) return;
@@ -1627,17 +1662,36 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
   const fl = filteredLeads;
   const isPosVenda = modTab==="pos_venda";
 
-  // KPIs — pós-venda usa status_envio, outros usam status
-  const total = isPosVenda ? posLeads.length : fl.length;
+  // ── Funil baseado em lead_stages do Supabase ─────────────────────────────
+  // Filtra stages pelos leads do módulo atual
+  const flLeadIds = new Set(fl.map(l=>String(l.id)));
+  const flLeadStages = modTab==="todos"
+    ? leadStages
+    : leadStages.filter(ls=>flLeadIds.has(String(ls.lead_id)));
+
+  // Pega o stage mais recente por lead (posição atual no funil)
+  const latestStageByLead = {};
+  flLeadStages.forEach(ls=>{
+    const prev = latestStageByLead[ls.lead_id];
+    if(!prev || new Date(ls.entered_at) > new Date(prev.entered_at)) {
+      latestStageByLead[ls.lead_id] = ls;
+    }
+  });
+  const countByStage = (stageId) =>
+    Object.values(latestStageByLead).filter(ls=>ls.stage_id===stageId).length;
+
+  // KPIs — pós-venda usa status_envio, outros usam lead_stages
+  const totalLeadsNoFunil = Object.keys(latestStageByLead).length;
+  const total = isPosVenda ? posLeads.length : (totalLeadsNoFunil || fl.length);
   const conv  = isPosVenda
     ? posLeads.filter(c=>["Finalizado","Agendou reunião"].includes(c.status_envio)).length
-    : fl.filter(l=>l.status==="Contratou"||l.status==="Fechado").length;
+    : countByStage("s8"); // "Contratou"
   const neg   = isPosVenda
     ? posLeads.filter(c=>["Em conversa","Respondeu"].includes(c.status_envio)).length
-    : fl.filter(l=>["Montar orçamento","Proposta enviada","Proposta","Negociando"].includes(l.status)).length;
+    : (countByStage("s5")+countByStage("s7")); // "Montar orçamento" + "Proposta enviada"
   const novos = isPosVenda
     ? posLeads.filter(c=>c.status_envio==="Aguardando").length
-    : fl.filter(l=>["Novo cliente","Novo contato"].includes(l.status)).length;
+    : countByStage("s1"); // "Novo cliente"
   const taxa=total?Math.round((conv/total)*100):0;
 
   // Funil adaptado por módulo
@@ -1649,20 +1703,10 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
     {label:"Agendou reunião",c:"#4ADE80"},
     {label:"Sem resposta",  c:"#F87171"},
   ];
-  const STAGE_ORDER=["Aguardando","Novo cliente","Conversando","Relacionamento","Reunião agendada","Montar orçamento","Não compareceu","Proposta enviada","Contratou"];
-  const stageIdx=(name)=>STAGE_ORDER.indexOf(name);
-  const reachedStage=(name)=>fl.filter(l=>stageIdx(l.status)>=stageIdx(name)).length;
+
   const FUNIL_VISIBLE = modTab==="pos_venda"
     ? POS_VENDA_STAGES.map(s=>({label:s.label,v:posLeads.filter(c=>(c.status_envio||"Aguardando")===s.label).length,c:s.c}))
-    : [
-        {label:"Aguardando",v:fl.filter(l=>l.status==="Aguardando").length,c:"#6B7280"},
-        {label:"Novo cliente",v:reachedStage("Novo cliente"),c:"#3B82F6"},
-        {label:"Conversando",v:reachedStage("Conversando"),c:"#8B5CF6"},
-        {label:"Relacionamento",v:reachedStage("Relacionamento"),c:"#10B981"},
-        {label:"Reunião agendada",v:reachedStage("Reunião agendada"),c:"#F59E0B"},
-        {label:"Proposta enviada",v:reachedStage("Proposta enviada"),c:"#6366F1"},
-        {label:"Contratou",v:reachedStage("Contratou"),c:"#4ADE80"},
-      ];
+    : FUNIL_STAGES.map(s=>({label:s.name, v:countByStage(s.id), c:s.color}));
   const maxF=Math.max(...FUNIL_VISIBLE.map(f=>f.v),1);
   // Total para % no funil: usar posLeads.length para pós-venda
   const totalForFunil = isPosVenda ? posLeads.length : total;
@@ -1827,7 +1871,7 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
       </div>
 
       {/* Central de Decisão */}
-      <CentralDecisao leads={fl} onSetPage={onSetPage} onAcionar={onAcionar}/>
+      <CentralDecisao leads={fl} onSetPage={onSetPage} onAcionar={onAcionar} leadStages={leadStages}/>
     </div>
   );
 }
@@ -2769,36 +2813,85 @@ const MODULE_META = {
 
 
 // ─── GOALS CONFIG - cadastro de metas (Master/Owner) ─────────────────────────
-function GoalsConfig({ users }) {
+function GoalsConfig({ users, currentUser }) {
   const safeUsers = users||[];
+  const tenantId = currentUser?.tenant_id;
   const [scope, setScope] = useState("company");
   const [selUser, setSelUser] = useState(safeUsers.filter(u=>u.role!=="owner"&&u.status!=="cancelado")[0]?.id||"");
   const [saved, setSaved] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const scopeId = scope==="company" ? "company" : selUser;
 
-  // form: { dia:{leads,conversa,reuniao,fechamento}, semana:{...}, mes:{...} }
-  const [form, setForm] = useState(()=>{
-    const g = getGoals2(scope==="company"?"company":selUser);
-    return JSON.parse(JSON.stringify(g));
+  const emptyForm = () => ({
+    dia:    {leads:0,conversa:0,reuniao:0,fechamento:0},
+    semana: {leads:0,conversa:0,reuniao:0,fechamento:0},
+    mes:    {leads:0,conversa:0,reuniao:0,fechamento:0},
   });
 
-  const loadForm = (sid) => {
-    const g = getGoals2(sid);
-    setForm(JSON.parse(JSON.stringify(g)));
+  const [form, setForm] = useState(emptyForm);
+
+  // Carrega metas do Supabase para o scopeId atual
+  const loadFromSupabase = async (sid) => {
+    if(!tenantId) return;
+    setLoading(true);
+    try {
+      const rows = await sbGetGoals(tenantId);
+      const scopeRows = (rows||[]).filter(r=>r.scope_id===sid);
+      const newForm = emptyForm();
+      scopeRows.forEach(r=>{
+        if(newForm[r.period] && r.indicator in newForm[r.period]) {
+          newForm[r.period][r.indicator] = r.value||0;
+        }
+      });
+      setForm(newForm);
+      // Atualiza cache em memória também
+      PERIODS.forEach(period=>{
+        GOAL_INDICATORS.forEach(ind=>{
+          setGoal2(sid, period, ind.id, newForm[period][ind.id]);
+        });
+      });
+    } catch(e) {
+      console.error("Erro ao carregar metas:", e);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  useEffect(()=>{ loadFromSupabase(scopeId); }, [scopeId, tenantId]);
+
+  const loadForm = (sid) => { /* loadFromSupabase chamado via useEffect */ };
 
   const setVal = (period, ind, val) => {
     setForm(f=>({...f,[period]:{...f[period],[ind]:val}}));
   };
 
-  const handleSave = () => {
-    PERIODS.forEach(period=>{
-      GOAL_INDICATORS.forEach(ind=>{
-        setGoal2(scopeId, period, ind.id, form[period][ind.id]);
+  const handleSave = async () => {
+    if(!tenantId) return;
+    setSaving(true);
+    try {
+      const upserts = [];
+      PERIODS.forEach(period=>{
+        GOAL_INDICATORS.forEach(ind=>{
+          upserts.push({
+            scope_id: scopeId,
+            period,
+            indicator: ind.id,
+            value: parseInt(form[period][ind.id])||0,
+            tenant_id: tenantId,
+          });
+          setGoal2(scopeId, period, ind.id, form[period][ind.id]);
+        });
       });
-    });
-    setSaved(true);
-    setTimeout(()=>setSaved(false),2500);
+      // Upsert em lote — requer coluna única (scope_id, period, indicator, tenant_id)
+      await sbFetch("goals", "POST", upserts, {"Prefer":"resolution=merge-duplicates,return=minimal"});
+      setSaved(true);
+      setTimeout(()=>setSaved(false),2500);
+    } catch(e) {
+      alert("Erro ao salvar metas: "+e.message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const activeUsers = safeUsers.filter(u=>u.status!=="cancelado");
@@ -2864,14 +2957,12 @@ function GoalsConfig({ users }) {
         💡 <strong style={{color:C.text}}>Exemplo:</strong> Dia = 5 leads · Semana = 25 leads · Mês = 100 leads - cada período tem sua própria meta independente.
       </div>
 
+      {loading&&<div style={{fontSize:12,color:C.muted,marginBottom:12}}>⏳ Carregando metas...</div>}
       <div style={{display:"flex",gap:10,alignItems:"center"}}>
-        <button onClick={handleSave} style={{...btnP,padding:"11px 28px",fontSize:13}}>
-          {saved?"✅ Metas salvas!":"💾 Salvar Metas"}
+        <button onClick={handleSave} disabled={saving||loading} style={{...btnP,padding:"11px 28px",fontSize:13,opacity:(saving||loading)?0.7:1}}>
+          {saving?"⏳ Salvando...":saved?"✅ Metas salvas!":"💾 Salvar Metas"}
         </button>
-        <button onClick={()=>{
-          const empty={leads:"",conversa:"",reuniao:"",fechamento:""};
-          setForm({dia:{...empty},semana:{...empty},mes:{...empty}});
-        }} style={{...btnG,padding:"11px 18px",fontSize:12}}>🗑 Limpar</button>
+        <button onClick={()=>{ setForm(emptyForm()); }} style={{...btnG,padding:"11px 18px",fontSize:12}}>🗑 Limpar</button>
         {saved&&<span style={{fontSize:12,color:"#4ADE80",fontWeight:700}}>✅ Salvo!</span>}
       </div>
     </div>
@@ -2903,12 +2994,51 @@ function GoalBar({ indicator, actual, goal, showMode }) {
 }
 
 // ─── GOALS DASHBOARD - bloco de metas no Dashboard ───────────────────────────
-function GoalsDashboard({ leads, users, currentUser }) {
+function GoalsDashboard({ leads, users, currentUser, leadStages=[] }) {
   const [showMode, setShowMode] = useState("abs");
   const [view, setView] = useState("company");
   const safeUsers = users||[];
+  const tenantId = currentUser?.tenant_id;
+  const [goalsData, setGoalsData] = useState({}); // { "company|dia|leads": 10, ... }
+  const [loadingGoals, setLoadingGoals] = useState(false);
+
+  useEffect(()=>{
+    if(!tenantId) return;
+    setLoadingGoals(true);
+    sbGetGoals(tenantId).then(rows=>{
+      const map = {};
+      (rows||[]).forEach(r=>{ map[r.scope_id+"|"+r.period+"|"+r.indicator] = r.value||0; });
+      setGoalsData(map);
+    }).catch(()=>{}).finally(()=>setLoadingGoals(false));
+  },[tenantId]);
+
+  const getGoalFromDB = (scopeId, period, indicator) =>
+    goalsData[scopeId+"|"+period+"|"+indicator] || getGoalValue(scopeId, period, indicator) || 0;
+
+  // Computa progresso real usando lead_stages do Supabase
+  const getActualFromStages = (period, indicator) => {
+    const { start, end } = getDateRange(period);
+    // Pega a última etapa de cada lead dentro do período
+    const latestByLead = {};
+    leadStages.forEach(ls=>{
+      const entered = new Date(ls.entered_at);
+      if(entered < start || entered > end) return;
+      const prev = latestByLead[ls.lead_id];
+      if(!prev || new Date(ls.entered_at) > new Date(prev.entered_at)) {
+        latestByLead[ls.lead_id] = ls;
+      }
+    });
+    const stageEntries = Object.values(latestByLead);
+    if(indicator==="leads") return stageEntries.length;
+    if(indicator==="conversa") return stageEntries.filter(ls=>["s2","s3","s4","s5","s6","s7","s8"].includes(ls.stage_id)).length;
+    if(indicator==="reuniao") return stageEntries.filter(ls=>["s4","s5","s6","s7","s8"].includes(ls.stage_id)).length;
+    if(indicator==="fechamento") return stageEntries.filter(ls=>ls.stage_id==="s8").length;
+    return 0;
+  };
 
   const getActual = (period, indicator) => {
+    if(leadStages.length>0) return getActualFromStages(period, indicator);
+    // fallback: memória
     const pl = filterLeadsByPeriod(leads, period);
     return computeProgress(leads, indicator, pl);
   };
@@ -2921,7 +3051,7 @@ function GoalsDashboard({ leads, users, currentUser }) {
         {GOAL_INDICATORS.map(ind=>(
           <GoalBar key={ind.id} indicator={ind}
             actual={getActual(period, ind.id)}
-            goal={getGoalValue(scopeId, period, ind.id)}
+            goal={getGoalFromDB(scopeId, period, ind.id)}
             showMode={showMode}/>
         ))}
       </div>
@@ -3354,6 +3484,7 @@ function FunnelPage({ leads, onUpdateLead, currentUser, isMaster }) {
   const [tick, setTick] = useState(0);
   const refresh = () => setTick(t=>t+1);
   const [filter, setFilter] = useState("all"); // all | pending | overdue
+  const tenantId = currentUser?.tenant_id;
 
   // Init stages for leads that have funilStage set
   // Always sync LEAD_STAGE from lead.status (source of truth)
@@ -3362,6 +3493,25 @@ function FunnelPage({ leads, onUpdateLead, currentUser, isMaster }) {
     const stageId = byStatus?.id || l.funilStage || FUNIL_STAGES[0]?.id || "s1";
     setLeadStage(l.id, stageId);
   });
+
+  // Persiste mudança de estágio no Supabase
+  const handleMoveStage = async (lead, newStage) => {
+    setLeadStage(lead.id, newStage.id);
+    onUpdateLead({...lead, funilStage: newStage.id, status: newStage.name});
+    refresh();
+    if(tenantId) {
+      try {
+        await sbFetch("lead_stages", "POST", {
+          id: crypto.randomUUID(),
+          lead_id: lead.id,
+          stage_id: newStage.id,
+          entered_at: new Date().toISOString(),
+          tenant_id: tenantId,
+          actions_done: [],
+        });
+      } catch(e) { console.error("Erro ao salvar estágio:", e); }
+    }
+  };
 
   const allPending = leads.filter(l=>getPendingActions(l).length>0);
   const allOverdue = leads.filter(l=>getPendingActions(l).some(a=>a.daysOverdue>0));
@@ -3435,7 +3585,7 @@ function FunnelPage({ leads, onUpdateLead, currentUser, isMaster }) {
                         {pending.length>0&&<span style={{fontSize:9,color:overdue.length>0?"#F87171":"#F59E0B",background:overdue.length>0?"rgba(248,113,113,0.1)":"rgba(245,158,11,0.1)",padding:"1px 6px",borderRadius:20}}>🔔 {pending.length} pendente(s)</span>}
                       </div>
                       {/* Move stage */}
-                      <select value={stage.id} onChange={e=>{const newStage=FUNIL_STAGES.find(s=>s.id===e.target.value);if(!newStage)return;setLeadStage(lead.id,newStage.id);onUpdateLead({...lead,funilStage:newStage.id,status:newStage.name});refresh();}}
+                      <select value={stage.id} onChange={e=>{const newStage=FUNIL_STAGES.find(s=>s.id===e.target.value);if(!newStage)return;handleMoveStage(lead,newStage);}}
                         style={{width:"100%",background:C.sidebar,border:("1px solid "+C.border),borderRadius:6,color:C.text,fontSize:10,padding:"3px 6px"}}>
                         {FUNIL_STAGES.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
@@ -3750,62 +3900,94 @@ const CANAL_ICONS = {
 // ─── Cadencias Component ──────────────────────────────────────────────────────
 function Cadencias({ leads, currentUser, onUpdateLead }) {
   const [view, setView]         = useState("lista");   // lista | editor | aplicar
-  // User sees: their own + shared sequences (owner_id null)
-  const [cadencias, setCadencias] = useState(
-    CADENCIAS_DB.filter(c=>c.owner_id===null||c.owner_id===currentUser?.id||(currentUser?.id||"local"))
-  );
-  const [editing, setEditing]   = useState(null);      // cadencia being edited
-  const [selCad, setSelCad]     = useState(null);      // cadencia to apply
-  const [selLeads, setSelLeads] = useState([]);         // leads to apply cadencia
+  const [cadencias, setCadencias] = useState([]);
+  const [editing, setEditing]   = useState(null);
+  const [selCad, setSelCad]     = useState(null);
+  const [selLeads, setSelLeads] = useState([]);
   const [saved, setSaved]       = useState(false);
+  const [loading, setLoading]   = useState(true);
+  const [saving, setSaving]     = useState(false);
 
-  const currentUserId = currentUser?.id||"local";
-  // Each user manages their own sequences — Owner can manage all
-  const isOwner  = currentUser?.role === "owner" || currentUser?.role === "master";
-  const canEdit  = true; // all users create/edit their own sequences
-  const canApply = true;
+  const tenantId     = currentUser?.tenant_id;
+  const currentUserId = currentUser?.id || "local";
+  const isOwner = currentUser?.role === "owner" || currentUser?.role === "master";
 
-  // ── CRUD Cadencias ──────────────────────────────────────────────────────────
+  // ── Carrega cadências do Supabase ─────────────────────────────────────────
+  useEffect(()=>{
+    if(!tenantId){ setLoading(false); return; }
+    setLoading(true);
+    sbGetCadencias(tenantId)
+      .then(rows=>{
+        if(Array.isArray(rows) && rows.length>0){
+          // Converte steps de JSON string para array se necessário
+          setCadencias(rows.map(r=>({
+            ...r,
+            steps: typeof r.steps === "string" ? JSON.parse(r.steps) : (r.steps||[]),
+          })));
+        } else {
+          // Nenhuma cadência no banco — sobe os defaults
+          const defaults = CADENCIAS_DB.map(c=>({...c, id: crypto.randomUUID(), tenant_id: tenantId, owner_id: null}));
+          setCadencias(defaults);
+          // Salva defaults no banco silenciosamente
+          defaults.forEach(cad=>{
+            sbUpsertCadencia({...cad, steps: JSON.stringify(cad.steps)}).catch(()=>{});
+          });
+        }
+      })
+      .catch(()=>{ setCadencias(CADENCIAS_DB); })
+      .finally(()=>setLoading(false));
+  },[tenantId]);
+
+  // ── CRUD ──────────────────────────────────────────────────────────────────
   const newCadencia = () => {
-    const cad = {
-      id: "cad" + (nextCadId++),
+    setEditing({
+      id: crypto.randomUUID(),
       name: "Nova Sequência",
       description: "",
       module: "prospeccao",
       active: true,
-      steps: [
-        { id:"s"+( nextStepId++), day:0, canal:"WhatsApp", tema:"1º Contato", descricao:"" }
-      ]
-    };
-    setEditing({...cad});
+      auto: false,
+      tenant_id: tenantId,
+      owner_id: currentUserId,
+      steps: [{ id: crypto.randomUUID(), day:0, canal:"WhatsApp", tema:"1º Contato", descricao:"" }],
+    });
     setView("editor");
   };
 
-  const saveEditing = () => {
-    if(!editing.name){return;}
-    const idx = cadencias.findIndex(c=>c.id===editing.id);
-    let updated;
-    if(idx>=0){
-      updated = cadencias.map(c=>c.id===editing.id?editing:c);
-    } else {
-      updated = [...cadencias, editing];
+  const saveEditing = async () => {
+    if(!editing.name) return;
+    setSaving(true);
+    try {
+      const payload = { ...editing, steps: JSON.stringify(editing.steps), tenant_id: tenantId };
+      await sbUpsertCadencia(payload);
+      const exists = cadencias.find(c=>c.id===editing.id);
+      setCadencias(exists
+        ? cadencias.map(c=>c.id===editing.id ? editing : c)
+        : [...cadencias, editing]
+      );
+      setSaved(true); setTimeout(()=>setSaved(false),2500);
+      setView("lista");
+    } catch(e) {
+      alert("Erro ao salvar: "+e.message);
+    } finally {
+      setSaving(false);
     }
-    setCadencias(updated);
-    CADENCIAS_DB.length=0; updated.forEach(c=>CADENCIAS_DB.push(c));
-    setSaved(true); setTimeout(()=>setSaved(false),2000);
-    setView("lista");
   };
 
-  const deleteCad = (id) => {
-    const updated = cadencias.filter(c=>c.id!==id);
-    setCadencias(updated);
-    CADENCIAS_DB.length=0; updated.forEach(c=>CADENCIAS_DB.push(c));
+  const deleteCad = async (id) => {
+    if(!window.confirm("Excluir esta sequência?")) return;
+    try {
+      await sbDeleteCadencia(id);
+      setCadencias(cadencias.filter(c=>c.id!==id));
+    } catch(e) {
+      alert("Erro ao excluir: "+e.message);
+    }
   };
 
   const addStep = () => {
     const lastDay = editing.steps[editing.steps.length-1]?.day||0;
     setEditing(e=>({...e, steps:[...e.steps,
-      {id:"s"+(nextStepId++), day:lastDay+3, canal:"WhatsApp", tema:"", descricao:""}
+      {id: crypto.randomUUID(), day:lastDay+3, canal:"WhatsApp", tema:"", descricao:""}
     ]}));
   };
 
@@ -3817,7 +3999,7 @@ function Cadencias({ leads, currentUser, onUpdateLead }) {
     setEditing(e=>({...e, steps:e.steps.filter(s=>s.id!==stepId)}));
   };
 
-  // ── Apply Cadencia to leads ─────────────────────────────────────────────────
+  // ── Aplicar cadência a leads ───────────────────────────────────────────────
   const applyToLeads = () => {
     if(!selCad||selLeads.length===0) return;
     selLeads.forEach(leadId=>{
@@ -3862,6 +4044,8 @@ function Cadencias({ leads, currentUser, onUpdateLead }) {
       {/* ── LISTA DE CADÊNCIAS ── */}
       {view==="lista"&&(
         <div>
+          {loading&&<div style={{textAlign:"center",padding:32,color:C.muted,fontSize:13}}>⏳ Carregando sequências...</div>}
+          {!loading&&cadencias.length===0&&<div style={{textAlign:"center",padding:32,color:C.muted,fontSize:13}}>Nenhuma sequência criada. Crie a primeira!</div>}
           {cadencias.map(cad=>(
             <div key={cad.id} style={{...card({padding:20,marginBottom:14}),border:"1px solid "+C.border}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14,flexWrap:"wrap",gap:8}}>
@@ -4021,8 +4205,8 @@ function Cadencias({ leads, currentUser, onUpdateLead }) {
           {/* Save */}
           <div style={{display:"flex",gap:10}}>
             <button onClick={()=>setView("lista")} style={{...btnG,flex:1,padding:"12px"}}>Cancelar</button>
-            <button onClick={saveEditing} style={{...btnP,flex:2,padding:"12px",fontSize:14,fontWeight:700}}>
-              {saved?"✅ Salvo!":"💾 Salvar Sequência"}
+            <button onClick={saveEditing} disabled={saving} style={{...btnP,flex:2,padding:"12px",fontSize:14,fontWeight:700,opacity:saving?0.7:1}}>
+              {saving?"⏳ Salvando...":saved?"✅ Salvo!":"💾 Salvar Sequência"}
             </button>
           </div>
         </div>
@@ -4822,7 +5006,7 @@ function OwnerPanel({ webhook, onWebhookChange }) {
 
       {tab==="segmentos"&&(<SegmentosConfig/>)}
 
-      {tab==="metas"&&(<GoalsConfig users={users}/>)}
+      {tab==="metas"&&(<GoalsConfig users={users} currentUser={currentUser}/>)}
 
       {/* ── TAB: WEBHOOK ──────────────────────────────────────────────────── */}
       {tab==="webhook"&&(
