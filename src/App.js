@@ -6379,7 +6379,7 @@ const PV_STAGES = [
   {id:"sem_resposta", name:"Sem resposta",   color:"#F87171", icon:"🔕"},
 ];
 
-function PosVenda({ currentUser }) {
+function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
   const [tab, setTab]           = useState("kanban"); // kanban | lista | funil
   const [clientes, setClientes] = useState([]);
   const [leadStages, setLeadStages] = useState([]); // lead_stages do módulo pos_venda
@@ -6520,7 +6520,7 @@ function PosVenda({ currentUser }) {
 
       {/* Tabs */}
       <div style={{display:"flex",gap:0,marginBottom:20,border:"1px solid "+C.border,borderRadius:10,overflow:"hidden"}}>
-        {[["kanban","📋 Kanban"],["lista","📄 Lista"],["funil","🔀 Funil"],].map(([v,l])=>(
+        {[["kanban","📋 Kanban"],["lista","📄 Lista"]].map(([v,l])=>(
           <button key={v} onClick={()=>setTab(v)}
             style={{flex:1,padding:"10px",border:"none",background:tab===v?C.accent:"transparent",color:tab===v?"#fff":C.muted,fontWeight:tab===v?700:400,fontSize:12,cursor:"pointer",transition:"all 0.15s"}}>
             {l}
@@ -6622,36 +6622,6 @@ function PosVenda({ currentUser }) {
         </div>
       )}
 
-      {/* ── ABA FUNIL ── */}
-      {tab==="funil"&&(
-        <div style={{overflowX:"auto"}}>
-          <div style={{display:"flex",gap:12,minWidth:700,paddingBottom:8}}>
-            {funilCols.map(({stage,leads:cols})=>(
-              <div key={stage.id} style={{flex:"0 0 200px",minWidth:180}}>
-                <div style={{padding:"8px 12px",borderRadius:8,background:stage.color+"18",border:"1px solid "+stage.color+"33",marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <span style={{fontSize:14}}>{stage.icon}</span>
-                  <span style={{fontSize:12,fontWeight:700,color:stage.color}}>{stage.name}</span>
-                  <span style={{fontSize:11,fontWeight:900,color:stage.color,background:stage.color+"30",borderRadius:20,padding:"1px 8px"}}>{cols.length}</span>
-                </div>
-                <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                  {cols.map(c=>(
-                    <div key={c.id} onClick={()=>setSel(c)}
-                      style={{...card({padding:10}),cursor:"pointer",borderLeft:"3px solid "+stage.color}}
-                      onMouseEnter={e=>e.currentTarget.style.background=C.accent+"08"}
-                      onMouseLeave={e=>e.currentTarget.style.background=C.panel}>
-                      <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.nome_formatado||c.nome}</div>
-                      {c.vendedor&&<div style={{fontSize:10,color:C.muted,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>👤 {c.vendedor}</div>}
-                      <div style={{fontSize:10,color:C.faint}}>{c.celular||c.whatsapp||"—"}</div>
-                      {c.data_cadastro_fmt&&<div style={{fontSize:10,color:C.faint,marginTop:2}}>📅 {c.data_cadastro_fmt}</div>}
-                    </div>
-                  ))}
-                  {cols.length===0&&<div style={{fontSize:11,color:C.faint,textAlign:"center",padding:"20px 0"}}>Vazio</div>}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Modal detalhe cliente */}
       {sel&&(()=>{
@@ -7573,7 +7543,7 @@ export default function App() {
     if(pg==="cadencia") return <Cadencias leads={leads} currentUser={user} onUpdateLead={updateLead}/>;
     if(pg==="prospeccao") return <Prospeccao currentUser={user}/>;
     if(pg==="receptivo") return <Receptivo leads={leads} onAddLead={addLead} onUpdateLead={updateLead} currentUser={user}/>;
-    if(pg==="pos_venda")  return <PosVenda currentUser={user}/>;
+    if(pg==="pos_venda")  return <PosVenda currentUser={user} notify={notify}/>;
     if(pg==="reativacao") return <Reativacao leads={leads} onUpdateLead={updateLead} onSetPage={setPage}/>;
     if(pg==="suporte")    return <Suporte leads={leads} onUpdateLead={updateLead} currentUser={user}/>;
     if(pg==="settings") return <Settings user={user}/>;
