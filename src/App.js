@@ -1638,10 +1638,10 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
       .catch(()=>{});
   },[tenantId]);
 
-  // Carrega dados de pós-venda do Supabase sempre que tenantId muda
+  // Carrega dados de pós-venda diretamente da tabela pos_venda (fonte correta)
   useEffect(()=>{
     if(!tenantId) return;
-    sbFetch("leads?select=*&module=eq.pos_venda&tenant_id=eq."+tenantId+"&order=created_at.desc")
+    sbFetch("pos_venda?select=*&tenant_id=eq."+tenantId+"&order=data_envio.desc")
       .then(rows=>setPosVendaData(Array.isArray(rows)?rows:[]))
       .catch(()=>{});
   },[tenantId]);
@@ -1661,15 +1661,19 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
   const fl = filteredLeads;
   const isPosVenda = modTab==="pos_venda";
 
-  // Resolve estágio atual de um lead pós-venda via lead_stages
-  const getPvStageId = (lead) => {
-    const ls = leadStages
-      .filter(s=>s.lead_id===lead.id)
-      .sort((a,b)=>new Date(b.entered_at)-new Date(a.entered_at))[0];
-    if(ls) return ls.stage_id;
-    // fallback: mapeia status do leads para id do PV_STAGES
-    const found = PV_STAGES.find(s=>s.name===lead.status);
-    return found?.id || "aguardando";
+  // Resolve estágio atual de um registro pos_venda via status_envio
+  const getPvStageId = (pv) => {
+    const st = pv.status_envio || "Aguardando";
+    // mapeia status_envio (string do módulo) → id do PV_STAGES
+    const map = {
+      "Aguardando":      "aguardando",
+      "Enviado":         "enviado",
+      "Respondeu":       "em_conversa",
+      "Agendou reunião": "agendou",
+      "Sem resposta":    "sem_resposta",
+      "Erro":            "aguardando",   // erro de agenda → aparece em Aguardando no dashboard
+    };
+    return map[st] || "aguardando";
   };
 
   // ── Funil baseado em lead_stages do Supabase ─────────────────────────────
@@ -1692,7 +1696,7 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
   const totalLeadsNoFunil = Object.keys(latestStageByLead).length;
   const total = isPosVenda ? posLeads.length : (totalLeadsNoFunil || fl.length);
   const conv  = isPosVenda
-    ? posLeads.filter(c=>["finalizado","agendou"].includes(getPvStageId(c))).length
+    ? posLeads.filter(c=>["agendou"].includes(getPvStageId(c))).length
     : countByStage("s8");
   const neg   = isPosVenda
     ? posLeads.filter(c=>["em_conversa","agendou"].includes(getPvStageId(c))).length
@@ -1764,7 +1768,7 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
             {label:"🔄 Reativação", leads:reaLeads,   color:"#F59E0B", page:"reativacao"},
           ].map(mod=>{
             const fechados = mod.isPV
-              ? mod.leads.filter(l=>["finalizado","agendou"].includes(getPvStageId(l))).length
+              ? mod.leads.filter(l=>["agendou"].includes(getPvStageId(l))).length
               : mod.leads.filter(l=>["Contratou","Fechado","finalizado"].includes(l.status)).length;
             const taxa2 = mod.leads.length?Math.round((fechados/mod.leads.length)*100):0;
             return (
@@ -6373,9 +6377,8 @@ function Suporte({ leads, onUpdateLead, currentUser }) {
 const PV_STAGES = [
   {id:"aguardando",   name:"Aguardando",     color:"#6B7280", icon:"⏳"},
   {id:"enviado",      name:"Enviado",        color:"#3B82F6", icon:"📤"},
-  {id:"em_conversa",  name:"Em conversa",    color:"#F59E0B", icon:"💬"},
+  {id:"em_conversa",  name:"Respondeu",      color:"#F59E0B", icon:"💬"},
   {id:"agendou",      name:"Agendou reunião",color:"#10B981", icon:"📅"},
-  {id:"finalizado",   name:"Finalizado",     color:"#4ADE80", icon:"✅"},
   {id:"sem_resposta", name:"Sem resposta",   color:"#F87171", icon:"🔕"},
 ];
 
@@ -6584,55 +6587,120 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
       {tab==="kanban"&&(
         loading
           ?<div style={{textAlign:"center",padding:40,color:C.muted}}>⟳ Carregando...</div>
-          :<div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8}}>
-            {funilCols.map(({stage,leads:stageLeads})=>(
-              <div key={stage.id} style={{minWidth:220,flex:"0 0 220px"}}>
-                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,padding:"8px 12px",background:stage.color+"18",borderRadius:8,border:"1px solid "+stage.color+"33"}}>
-                  <span>{stage.icon}</span>
-                  <span style={{fontSize:12,fontWeight:700,color:stage.color}}>{stage.name}</span>
-                  <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:stage.color,background:stage.color+"22",padding:"1px 8px",borderRadius:20}}>{stageLeads.length}</span>
+          :<div style={{display:"flex",flexDirection:"column",gap:20}}>
+
+            {/* ── FUNIL 1: AGENDAMENTO (pos_venda_agenda) ── */}
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+                <div style={{flex:1,height:1,background:C.border}}/>
+                <div style={{display:"flex",alignItems:"center",gap:6,padding:"4px 14px",borderRadius:20,background:"#8B5CF620",border:"1px solid #8B5CF640"}}>
+                  <span style={{fontSize:11}}>📋</span>
+                  <span style={{fontSize:11,fontWeight:700,color:"#8B5CF6",letterSpacing:0.5}}>AGENDAMENTO</span>
+                  <span style={{fontSize:10,color:"#8B5CF6",opacity:0.7}}>pos_venda_agenda</span>
                 </div>
-                <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                  {stageLeads.map(c=>(
-                    <div key={c.id} onClick={()=>setSel(c)}
-                      style={{...card({padding:12}),border:"1px solid "+C.border,cursor:"pointer",transition:"all 0.15s"}}
-                      onMouseEnter={e=>e.currentTarget.style.borderColor=stage.color}
-                      onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
-                      <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:4}}>{c.nome_formatado||c.nome}</div>
-                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
-                        <span style={{fontSize:9,color:"#fff",background:"#25D366",padding:"1px 7px",borderRadius:20,fontWeight:700}}>WhatsApp</span>
-                        {c.vendedor&&<span style={{fontSize:9,color:C.faint}}>👤 {c.vendedor}</span>}
-                      </div>
-                      <div style={{fontSize:10,color:C.muted}}>{c.celular||c.whatsapp||"—"}</div>
-                      {c.data_cadastro_fmt&&<div style={{fontSize:10,color:C.faint,marginTop:2}}>📅 {c.data_cadastro_fmt}</div>}
-                      {c._source==="agenda_erro"&&(
-                        <button onClick={e=>{e.stopPropagation();retentarAgenda(c);}}
-                          style={{marginTop:8,width:"100%",padding:"4px",fontSize:10,fontWeight:700,background:"#EF444420",border:"1px solid #EF444460",borderRadius:6,color:"#EF4444",cursor:"pointer"}}>
-                          🔄 Retentar processamento
-                        </button>
-                      )}
-                      {c._source==="agenda_pendente"&&(
-                        <div style={{marginTop:6,fontSize:9,color:"#8B5CF6",fontWeight:600,textAlign:"center"}}>🕐 Aguarda data de acionamento</div>
-                      )}
-                      {!c._source&&(
-                        <div style={{marginTop:8}}>
-                          <select value={c.status_envio||"Aguardando"} onClick={e=>e.stopPropagation()}
-                            onChange={e=>updateStatus(c,e.target.value)}
-                            style={{...inp,fontSize:10,padding:"3px 6px",width:"100%"}}>
-                            {PV_STATUS_EDITAVEIS.map(s=>(
-                              <option key={s} value={s}>{s}</option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {stageLeads.length===0&&(
-                    <div style={{padding:"16px 8px",textAlign:"center",color:C.faint,fontSize:11,border:"1px dashed "+C.border,borderRadius:8}}>Vazio</div>
-                  )}
-                </div>
+                <div style={{flex:1,height:1,background:C.border}}/>
               </div>
-            ))}
+              <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8}}>
+                {[
+                  {status:"Aguardando", source:"agenda_pendente", color:"#6B7280", icon:"⏳"},
+                  {status:"Erro",       source:"agenda_erro",     color:"#EF4444", icon:"⚠️"},
+                  {status:"Agendado",   source:"agenda_processado",color:"#8B5CF6",icon:"🕐"},
+                ].map(({status,source,color,icon})=>{
+                  const stageLeads = clientes.filter(c=>c._source===source);
+                  return (
+                    <div key={status} style={{minWidth:220,flex:"0 0 220px"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,padding:"8px 12px",background:color+"18",borderRadius:8,border:"1px solid "+color+"33"}}>
+                        <span>{icon}</span>
+                        <span style={{fontSize:12,fontWeight:700,color}}>{status}</span>
+                        <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color,background:color+"22",padding:"1px 8px",borderRadius:20}}>{stageLeads.length}</span>
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                        {stageLeads.map(c=>(
+                          <div key={c.id} onClick={()=>setSel(c)}
+                            style={{...card({padding:12}),border:"1px solid "+C.border,cursor:"pointer",transition:"all 0.15s"}}
+                            onMouseEnter={e=>e.currentTarget.style.borderColor=color}
+                            onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+                            <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:4}}>{c.nome_formatado||c.nome}</div>
+                            {c.vendedor&&<div style={{fontSize:9,color:C.faint,marginBottom:4}}>👤 {c.vendedor}</div>}
+                            <div style={{fontSize:10,color:C.muted}}>{c.celular||"—"}</div>
+                            {c.data_cadastro_fmt&&<div style={{fontSize:10,color:C.faint,marginTop:2}}>📅 {c.data_cadastro_fmt}</div>}
+                            {source==="agenda_erro"&&(
+                              <button onClick={e=>{e.stopPropagation();retentarAgenda(c);}}
+                                style={{marginTop:8,width:"100%",padding:"4px",fontSize:10,fontWeight:700,background:"#EF444420",border:"1px solid #EF444460",borderRadius:6,color:"#EF4444",cursor:"pointer"}}>
+                                🔄 Retentar
+                              </button>
+                            )}
+                            {source==="agenda_pendente"&&(
+                              <div style={{marginTop:6,fontSize:9,color:"#6B7280",fontWeight:600,textAlign:"center"}}>⏳ Aguarda data de acionamento</div>
+                            )}
+                            {source==="agenda_processado"&&(
+                              <div style={{marginTop:6,fontSize:9,color:"#8B5CF6",fontWeight:600,textAlign:"center"}}>🕐 Processado — envio pendente</div>
+                            )}
+                          </div>
+                        ))}
+                        {stageLeads.length===0&&(
+                          <div style={{padding:"16px 8px",textAlign:"center",color:C.faint,fontSize:11,border:"1px dashed "+C.border,borderRadius:8}}>Vazio</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* ── FUNIL 2: ACIONAMENTO (pos_venda) ── */}
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+                <div style={{flex:1,height:1,background:C.border}}/>
+                <div style={{display:"flex",alignItems:"center",gap:6,padding:"4px 14px",borderRadius:20,background:"#3B82F620",border:"1px solid #3B82F640"}}>
+                  <span style={{fontSize:11}}>📤</span>
+                  <span style={{fontSize:11,fontWeight:700,color:"#3B82F6",letterSpacing:0.5}}>ACIONAMENTO</span>
+                  <span style={{fontSize:10,color:"#3B82F6",opacity:0.7}}>pos_venda</span>
+                </div>
+                <div style={{flex:1,height:1,background:C.border}}/>
+              </div>
+              <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8}}>
+                {PV_STATUS_EDITAVEIS.map(status=>{
+                  const {color,icon} = pvMeta(status);
+                  const stageLeads = clientes.filter(c=>!c._source&&(c.status_envio||"Enviado")===status);
+                  return (
+                    <div key={status} style={{minWidth:220,flex:"0 0 220px"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,padding:"8px 12px",background:color+"18",borderRadius:8,border:"1px solid "+color+"33"}}>
+                        <span>{icon}</span>
+                        <span style={{fontSize:12,fontWeight:700,color}}>{status}</span>
+                        <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color,background:color+"22",padding:"1px 8px",borderRadius:20}}>{stageLeads.length}</span>
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                        {stageLeads.map(c=>(
+                          <div key={c.id} onClick={()=>setSel(c)}
+                            style={{...card({padding:12}),border:"1px solid "+C.border,cursor:"pointer",transition:"all 0.15s"}}
+                            onMouseEnter={e=>e.currentTarget.style.borderColor=color}
+                            onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+                            <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:4}}>{c.nome_formatado||c.nome}</div>
+                            {c.vendedor&&<div style={{fontSize:9,color:C.faint,marginBottom:4}}>👤 {c.vendedor}</div>}
+                            <div style={{fontSize:10,color:C.muted}}>{c.celular||c.whatsapp||"—"}</div>
+                            {c.data_cadastro&&<div style={{fontSize:10,color:C.faint,marginTop:2}}>📅 {new Date(c.data_cadastro).toLocaleDateString("pt-BR")}</div>}
+                            <div style={{marginTop:8}}>
+                              <select value={c.status_envio||"Enviado"} onClick={e=>e.stopPropagation()}
+                                onChange={e=>updateStatus(c,e.target.value)}
+                                style={{...inp,fontSize:10,padding:"3px 6px",width:"100%"}}>
+                                {PV_STATUS_EDITAVEIS.map(s=>(
+                                  <option key={s} value={s}>{s}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        ))}
+                        {stageLeads.length===0&&(
+                          <div style={{padding:"16px 8px",textAlign:"center",color:C.faint,fontSize:11,border:"1px dashed "+C.border,borderRadius:8}}>Vazio</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
           </div>
       )}
 
@@ -7472,7 +7540,8 @@ export default function App() {
       };
       try {
         if(user?.tenant_id){ try { const t=await sbFetch("tenants?id=eq."+user.tenant_id+"&select=config"); if(t&&t[0]?.config){ const cfg=typeof t[0].config==="string"?JSON.parse(t[0].config):t[0].config; if(cfg.webhooks) setOwnerWebhooks(w=>({...w,...cfg.webhooks})); } } catch(e){ console.warn(e); } }
-        const rows = await sbGetLeads(user?.tenant_id); // loads all modules
+        // pos_venda excluído — tem tabela própria (pos_venda) carregada no Dashboard
+        const rows = await sbFetch("leads?select=*&order=created_at.desc&tenant_id=eq."+user?.tenant_id+"&module=neq.pos_venda");
         if(rows && rows.length > 0){
           rows.forEach(r=>{ setLeadStage(r.id, r.funil_stage||firstStage); });
           setLeads(rows.map(dbToLead));
