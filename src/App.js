@@ -3518,7 +3518,6 @@ function FunnelPage({ leads, onUpdateLead, currentUser, isMaster }) {
     if(tenantId) {
       try {
         await sbFetch("lead_stages", "POST", {
-          id: crypto.randomUUID(),
           lead_id: lead.id,
           stage_id: newStage.id,
           entered_at: new Date().toISOString(),
@@ -3957,7 +3956,6 @@ function Cadencias({ leads, currentUser, onUpdateLead }) {
   // ── CRUD ──────────────────────────────────────────────────────────────────
   const newCadencia = () => {
     setEditing({
-      id: crypto.randomUUID(),
       name: "Nova Sequência",
       description: "",
       module: "prospeccao",
@@ -5111,7 +5109,6 @@ function MasterPanel({ currentUser }) {
     setBusy(true);
     try {
       await sbAuth.createUser({
-        id: crypto.randomUUID(),
         name: form.name,
         email: form.email,
         password: form.password,
@@ -5843,7 +5840,7 @@ function Prospeccao({ currentUser, onAddToProsp }) {
     try {
       await sbFetch("leads?id=eq."+lead.id+"&tenant_id=eq."+tenantId,"PATCH",{status:stage?.name||stageId});
       await sbFetch("lead_stages","POST",{
-        id:crypto.randomUUID(), lead_id:lead.id, stage_id:stageId,
+        lead_id:lead.id, stage_id:stageId,
         entered_at:new Date().toISOString(), tenant_id:tenantId, actions_done:[]
       });
       setLeads(ls=>ls.map(l=>l.id===lead.id?{...l,status:stage?.name||stageId}:l));
@@ -5873,7 +5870,7 @@ function Prospeccao({ currentUser, onAddToProsp }) {
       const saved = await sbFetch("leads","POST",payload,{"Prefer":"return=representation"});
       const newLead = Array.isArray(saved)&&saved[0] ? saved[0] : payload;
       await sbFetch("lead_stages","POST",{
-        id:crypto.randomUUID(), lead_id:newLead.id, stage_id:PROSP_STAGES[0].id,
+        lead_id:newLead.id, stage_id:PROSP_STAGES[0].id,
         entered_at:new Date().toISOString(), tenant_id:tenantId, actions_done:[]
       });
       setLeads(ls=>[newLead,...ls]);
@@ -5888,7 +5885,7 @@ function Prospeccao({ currentUser, onAddToProsp }) {
       const saved = await sbFetch("leads","POST",payload,{"Prefer":"return=representation"});
       const newLead = Array.isArray(saved)&&saved[0] ? saved[0] : payload;
       await sbFetch("lead_stages","POST",{
-        id:crypto.randomUUID(), lead_id:newLead.id, stage_id:PROSP_STAGES[0].id,
+        lead_id:newLead.id, stage_id:PROSP_STAGES[0].id,
         entered_at:new Date().toISOString(), tenant_id:tenantId, actions_done:[]
       });
       setLeads(ls=>[newLead,...ls]);
@@ -6445,7 +6442,6 @@ function PosVenda({ currentUser }) {
       await sbFetch("leads?id=eq."+lead.id, "PATCH", {status: stage.name});
       // Registra em lead_stages para histórico
       await sbFetch("lead_stages", "POST", {
-        id: crypto.randomUUID(),
         lead_id: lead.id,
         stage_id: stageId,
         entered_at: new Date().toISOString(),
@@ -6489,7 +6485,6 @@ function PosVenda({ currentUser }) {
         const lead = Array.isArray(newLead)?newLead[0]:newLead;
         if(lead?.id) {
           await sbFetch("lead_stages","POST",{
-            id: crypto.randomUUID(),
             lead_id: lead.id,
             stage_id: "aguardando",
             entered_at: new Date().toISOString(),
@@ -7584,7 +7579,7 @@ export default function App() {
       const saved = await sbFetch("leads","POST",payload,{"Prefer":"return=representation"});
       const newLead = Array.isArray(saved)&&saved[0] ? saved[0] : payload;
       await sbFetch("lead_stages","POST",{
-        id:crypto.randomUUID(), lead_id:newLead.id, stage_id:PROSP_STAGES[0].id,
+        lead_id:newLead.id, stage_id:PROSP_STAGES[0].id,
         entered_at:new Date().toISOString(), tenant_id:tenantId, actions_done:[]
       });
       notify("🎯 "+newLead.name+" adicionado à Prospecção!");
