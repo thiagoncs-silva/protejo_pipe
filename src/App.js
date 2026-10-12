@@ -6393,9 +6393,8 @@ function PosVenda({ currentUser }) {
   const [agForm, setAgForm]         = useState({data:"", hora:"", tipo:"whatsapp", obs:""});
   const [saving,   setSaving]   = useState(false);
   const [form, setForm] = useState({
-    name:"", company:"", phone:"", email:"", document:"",
-    channel:"whatsapp", assigned_to:"", notes:"",
-    scheduled_at:"", responsible:"",
+    nome:"", telefone:"", cpf_cnpj:"", vendedor:"",
+    data_relacionamento:"", data_agendamento:"", hora_agendamento:"",
   });
   const [lote, setLote] = useState([]);
 
@@ -6406,12 +6405,9 @@ function PosVenda({ currentUser }) {
   const loadClientes = async () => {
     setLoading(true);
     try {
-      const [rows, stages] = await Promise.all([
-        sbFetch("leads?select=*&module=eq.pos_venda&tenant_id=eq."+tenantId+"&order=created_at.desc"),
-        sbFetch("lead_stages?select=*&tenant_id=eq."+tenantId+"&order=entered_at.desc"),
-      ]);
+      const rows = await sbFetch("pos_venda?select=*&tenant_id=eq."+tenantId+"&order=data_cadastro.desc");
       setClientes(Array.isArray(rows)?rows:[]);
-      setLeadStages(Array.isArray(stages)?stages:[]);
+      setLeadStages([]);
       setError("");
     } catch(e) {
       setError("Erro ao carregar: "+e.message);
@@ -6420,82 +6416,43 @@ function PosVenda({ currentUser }) {
 
   useEffect(()=>{ loadClientes(); },[]);
 
-  // Último estágio de cada lead (lead_stages)
-  const latestStageMap = leadStages.reduce((acc, ls)=>{
-    if(!acc[ls.lead_id] || ls.entered_at > acc[ls.lead_id].entered_at) acc[ls.lead_id]=ls;
-    return acc;
-  },{});
-
-  // Resolve estágio atual: prefere lead_stages, fallback no leads.status
-  const getStage = (c) => {
-    const ls = latestStageMap[c.id];
-    if(ls) return PV_STAGES.find(s=>s.id===ls.stage_id) || PV_STAGES[0];
-    return PV_STAGES.find(s=>s.name===c.status) || PV_STAGES[0];
-  };
-
-  // ── Atualizar estágio ─────────────────────────────────────────────────────────
-  const updateStatus = async (lead, stageId) => {
-    const stage = PV_STAGES.find(s=>s.id===stageId);
-    if(!stage) return;
+  // ── Atualizar status na tabela pos_venda ─────────────────────────────────────
+  const updateStatus = async (lead, novoStatus) => {
     try {
-      // Atualiza leads.status para compatibilidade
-      await sbFetch("leads?id=eq."+lead.id, "PATCH", {status: stage.name});
-      // Registra em lead_stages para histórico
-      await sbFetch("lead_stages", "POST", {
-        lead_id: lead.id,
-        stage_id: stageId,
-        entered_at: new Date().toISOString(),
-        tenant_id: tenantId,
-        actions_done: [],
-      });
-      // Atualiza estado local
-      setClientes(cs=>cs.map(c=>c.id===lead.id?{...c,status:stage.name}:c));
-      setLeadStages(ls=>[{id:crypto.randomUUID(),lead_id:lead.id,stage_id:stageId,entered_at:new Date().toISOString(),tenant_id:tenantId},...ls]);
-      if(sel?.id===lead.id) setSel(s=>({...s,status:stage.name}));
+      await sbFetch("pos_venda?id=eq."+lead.id+"&tenant_id=eq."+tenantId, "PATCH", {status_envio: novoStatus});
+      setClientes(cs=>cs.map(c=>c.id===lead.id?{...c,status_envio:novoStatus}:c));
+      if(sel?.id===lead.id) setSel(s=>({...s,status_envio:novoStatus}));
     } catch(e) { setError(e.message); }
   };
 
   // ── Salvar novo cliente ───────────────────────────────────────────────────────
   const salvarCliente = async () => {
-    if(!form.name||!form.phone){ setError("Nome e telefone são obrigatórios."); return; }
+    if(!form.nome||!form.telefone){ setError("Nome e telefone são obrigatórios."); return; }
+    if(!form.data_agendamento||!form.hora_agendamento){ setError("Data e horário do acionamento são obrigatórios."); return; }
     setSaving(true); setError("");
     try {
       const lista = lote.length>0 ? lote : [form];
       for(const item of lista){
-        // Compõe notes consolidando campos extras que não existem na tabela leads
-      const notesExtra = [
-        item.document ? "CPF/CNPJ: "+item.document : "",
-        item.assigned_to ? "Responsável: "+item.assigned_to : "",
-        item.notes||"",
-      ].filter(Boolean).join(" | ");
-
-      const newLead = await sbFetch("leads","POST",{
-          name: item.name,
-          company: item.company||null,
-          phone: item.phone,
-          email: item.email||null,
-          channel: item.channel||"whatsapp",
-          notes: notesExtra||null,
-          status: "Aguardando",
-          module: "pos_venda",
+        // Monta data_agendamento como timestamptz
+        const dataAg = item.data_agendamento && item.hora_agendamento
+          ? new Date(item.data_agendamento+"T"+item.hora_agendamento+":00").toISOString()
+          : null;
+        await sbFetch("pos_venda_agenda","POST",{
           tenant_id: tenantId,
+          nome: item.nome,
+          telefone: item.telefone,
+          cpf_cnpj: item.cpf_cnpj||null,
+          vendedor: item.vendedor||null,
+          data_relacionamento: item.data_relacionamento||null,
+          data_agendamento: dataAg,
+          status: "pendente",
           created_at: new Date().toISOString(),
-        },{"Prefer":"return=representation"});
-        // Registra estágio inicial
-        const lead = Array.isArray(newLead)?newLead[0]:newLead;
-        if(lead?.id) {
-          await sbFetch("lead_stages","POST",{
-            lead_id: lead.id,
-            stage_id: "aguardando",
-            entered_at: new Date().toISOString(),
-            tenant_id: tenantId,
-            actions_done: [],
-          });
-        }
+        });
       }
       setLote([]);
-      setForm({name:"",company:"",phone:"",email:"",document:"",channel:"whatsapp",assigned_to:"",notes:"",scheduled_at:"",responsible:""});
+      setForm({nome:"",telefone:"",cpf_cnpj:"",vendedor:"",data_relacionamento:"",data_agendamento:"",hora_agendamento:""});
       setShowForm(false);
+      notify("✅ Cliente agendado com sucesso!");
       loadClientes();
     } catch(e){
       setError("Erro ao salvar: "+e.message);
@@ -6503,38 +6460,38 @@ function PosVenda({ currentUser }) {
   };
 
   const addToLote = () => {
-    if(!form.name||!form.phone){ setError("Nome e telefone são obrigatórios."); return; }
+    if(!form.nome||!form.telefone){ setError("Nome e telefone são obrigatórios."); return; }
     setLote(l=>[...l,{...form,_id:Date.now()}]);
-    setForm(p=>({...p,name:"",company:"",phone:"",email:"",document:""}));
+    setForm(p=>({...p,nome:"",telefone:"",cpf_cnpj:""}));
     setError("");
   };
 
-  // ── Filtros ───────────────────────────────────────────────────────────────────
+  // ── Filtros — pos_venda usa status_envio ─────────────────────────────────────
   const filtered = clientes.filter(c=>{
-    const stage = getStage(c);
-    const matchFiltro = filtro==="todos" ? true : stage.id===filtro;
+    const matchFiltro = filtro==="todos" ? true : (c.status_envio||"Aguardando")===filtro;
     const matchBusca = !busca ||
-      (c.name||"").toLowerCase().includes(busca.toLowerCase()) ||
-      (c.company||"").toLowerCase().includes(busca.toLowerCase()) ||
-      (c.phone||"").includes(busca);
+      (c.nome||"").toLowerCase().includes(busca.toLowerCase()) ||
+      (c.celular||"").includes(busca) ||
+      (c.cpf_cnpj||"").includes(busca);
     return matchFiltro && matchBusca;
   });
 
   const total      = clientes.length;
-  const enviados   = clientes.filter(c=>getStage(c).id!=="aguardando").length;
-  const responderam= clientes.filter(c=>["em_conversa","agendou","finalizado"].includes(getStage(c).id)).length;
-  const aguardando = clientes.filter(c=>getStage(c).id==="aguardando").length;
+  const enviados   = clientes.filter(c=>(c.status_envio||"Aguardando")!=="Aguardando").length;
+  const responderam= clientes.filter(c=>["Respondeu","Finalizado"].includes(c.status_envio||"")).length;
+  const aguardando = clientes.filter(c=>(c.status_envio||"Aguardando")==="Aguardando").length;
   const txResposta = enviados>0?Math.round((responderam/enviados)*100):0;
 
+  const PV_STATUS = ["Aguardando","Enviado","Respondeu","Finalizado","Sem resposta"];
   const FILTROS = [
     {id:"todos", label:"Todos", count:total},
-    ...PV_STAGES.map(s=>({id:s.id,label:s.name,count:clientes.filter(c=>getStage(c).id===s.id).length})),
+    ...PV_STATUS.map(s=>({id:s,label:s,count:clientes.filter(c=>(c.status_envio||"Aguardando")===s).length})),
   ];
 
-  // ── Funil kanban ─────────────────────────────────────────────────────────────
-  const funilCols = PV_STAGES.map(stage=>({
-    stage,
-    leads: clientes.filter(c=>getStage(c).id===stage.id),
+  // ── Funil kanban — agrupa por status_envio ───────────────────────────────────
+  const funilCols = PV_STATUS.map(status=>({
+    stage: {id:status,name:status,color:status==="Aguardando"?"#6B7280":status==="Enviado"?"#3B82F6":status==="Respondeu"?"#F59E0B":status==="Finalizado"?"#4ADE80":"#F87171",icon:status==="Aguardando"?"⏳":status==="Enviado"?"📤":status==="Respondeu"?"💬":status==="Finalizado"?"✅":"🔕"},
+    leads: clientes.filter(c=>(c.status_envio||"Aguardando")===status),
   }));
 
   return (
@@ -6576,45 +6533,43 @@ function PosVenda({ currentUser }) {
         loading
           ?<div style={{textAlign:"center",padding:40,color:C.muted}}>⟳ Carregando...</div>
           :<div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8}}>
-            {PV_STAGES.map(stage=>{
-              const stageLeads = clientes.filter(c=>getStage(c).id===stage.id);
-              return (
-                <div key={stage.id} style={{minWidth:220,flex:"0 0 220px"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,padding:"8px 12px",background:stage.color+"18",borderRadius:8,border:"1px solid "+stage.color+"33"}}>
-                    <span>{stage.icon}</span>
-                    <span style={{fontSize:12,fontWeight:700,color:stage.color}}>{stage.name}</span>
-                    <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:stage.color,background:stage.color+"22",padding:"1px 8px",borderRadius:20}}>{stageLeads.length}</span>
-                  </div>
-                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                    {stageLeads.map(c=>(
-                      <div key={c.id} onClick={()=>setSel(c)}
-                        style={{...card({padding:12}),border:"1px solid "+C.border,cursor:"pointer",transition:"all 0.15s"}}
-                        onMouseEnter={e=>e.currentTarget.style.borderColor=stage.color}
-                        onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
-                        <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:4}}>{c.name}</div>
-                        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
-                          <span style={{fontSize:9,color:"#fff",background:c.channel==="whatsapp"?"#25D366":c.channel==="email"?"#3B82F6":"#6B7280",padding:"1px 7px",borderRadius:20,fontWeight:700}}>{c.channel||"—"}</span>
-                          {c.assigned_to&&<span style={{fontSize:9,color:C.faint}}>👤 {c.assigned_to}</span>}
-                        </div>
-                        {c.notes&&<div style={{fontSize:10,color:C.dim,fontStyle:"italic"}}>{c.notes.substring(0,50)}{c.notes.length>50?"...":""}</div>}
-                        <div style={{marginTop:8}}>
-                          <select value={getStage(c).id} onClick={e=>e.stopPropagation()}
-                            onChange={e=>updateStatus(c,e.target.value)}
-                            style={{...inp,fontSize:10,padding:"3px 6px",width:"100%"}}>
-                            {PV_STAGES.map(s=>(
-                              <option key={s.id} value={s.id}>{s.icon} {s.name}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    ))}
-                    {stageLeads.length===0&&(
-                      <div style={{padding:"16px 8px",textAlign:"center",color:C.faint,fontSize:11,border:"1px dashed "+C.border,borderRadius:8}}>Vazio</div>
-                    )}
-                  </div>
+            {funilCols.map(({stage,leads:stageLeads})=>(
+              <div key={stage.id} style={{minWidth:220,flex:"0 0 220px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,padding:"8px 12px",background:stage.color+"18",borderRadius:8,border:"1px solid "+stage.color+"33"}}>
+                  <span>{stage.icon}</span>
+                  <span style={{fontSize:12,fontWeight:700,color:stage.color}}>{stage.name}</span>
+                  <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:stage.color,background:stage.color+"22",padding:"1px 8px",borderRadius:20}}>{stageLeads.length}</span>
                 </div>
-              );
-            })}
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {stageLeads.map(c=>(
+                    <div key={c.id} onClick={()=>setSel(c)}
+                      style={{...card({padding:12}),border:"1px solid "+C.border,cursor:"pointer",transition:"all 0.15s"}}
+                      onMouseEnter={e=>e.currentTarget.style.borderColor=stage.color}
+                      onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+                      <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:4}}>{c.nome_formatado||c.nome}</div>
+                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+                        <span style={{fontSize:9,color:"#fff",background:"#25D366",padding:"1px 7px",borderRadius:20,fontWeight:700}}>WhatsApp</span>
+                        {c.vendedor&&<span style={{fontSize:9,color:C.faint}}>👤 {c.vendedor}</span>}
+                      </div>
+                      <div style={{fontSize:10,color:C.muted}}>{c.celular||c.whatsapp||"—"}</div>
+                      {c.data_cadastro_fmt&&<div style={{fontSize:10,color:C.faint,marginTop:2}}>📅 {c.data_cadastro_fmt}</div>}
+                      <div style={{marginTop:8}}>
+                        <select value={c.status_envio||"Aguardando"} onClick={e=>e.stopPropagation()}
+                          onChange={e=>updateStatus(c,e.target.value)}
+                          style={{...inp,fontSize:10,padding:"3px 6px",width:"100%"}}>
+                          {PV_STATUS.map(s=>(
+                            <option key={s} value={s}>{s}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  ))}
+                  {stageLeads.length===0&&(
+                    <div style={{padding:"16px 8px",textAlign:"center",color:C.faint,fontSize:11,border:"1px dashed "+C.border,borderRadius:8}}>Vazio</div>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
       )}
 
@@ -6643,20 +6598,22 @@ function PosVenda({ currentUser }) {
               </div>
               :<div style={card({padding:0,overflow:"hidden"})}>
                 {filtered.map((c,i)=>{
-                  const stage=getStage(c);
+                  const st = c.status_envio||"Aguardando";
+                  const stColor = st==="Aguardando"?"#6B7280":st==="Enviado"?"#3B82F6":st==="Respondeu"?"#F59E0B":st==="Finalizado"?"#4ADE80":"#F87171";
+                  const stIcon  = st==="Aguardando"?"⏳":st==="Enviado"?"📤":st==="Respondeu"?"💬":st==="Finalizado"?"✅":"🔕";
                   return (
                     <div key={c.id} onClick={()=>setSel(c)}
                       style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<filtered.length-1?"1px solid "+C.border:"none",cursor:"pointer"}}
                       onMouseEnter={e=>e.currentTarget.style.background=C.accent+"08"}
                       onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                      <div style={{width:36,height:36,borderRadius:"50%",background:stage.color+"18",border:"1px solid "+stage.color+"33",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
-                        {stage.icon}
+                      <div style={{width:36,height:36,borderRadius:"50%",background:stColor+"18",border:"1px solid "+stColor+"33",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
+                        {stIcon}
                       </div>
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:13,fontWeight:700,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</div>
-                        <div style={{fontSize:11,color:C.muted}}>{c.phone||"—"}{c.company?" · "+c.company:""}{c.assigned_to?" · "+c.assigned_to:""}</div>
+                        <div style={{fontSize:13,fontWeight:700,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.nome_formatado||c.nome}</div>
+                        <div style={{fontSize:11,color:C.muted}}>{c.celular||c.whatsapp||"—"}{c.vendedor?" · 👤 "+c.vendedor:""}{c.cpf_cnpj?" · "+c.cpf_cnpj:""}</div>
                       </div>
-                      <span style={{fontSize:9,color:stage.color,background:stage.color+"18",padding:"2px 8px",borderRadius:20,fontWeight:700,whiteSpace:"nowrap"}}>{stage.name}</span>
+                      <span style={{fontSize:9,color:stColor,background:stColor+"18",padding:"2px 8px",borderRadius:20,fontWeight:700,whiteSpace:"nowrap"}}>{st}</span>
                     </div>
                   );
                 })}
@@ -6682,9 +6639,10 @@ function PosVenda({ currentUser }) {
                       style={{...card({padding:10}),cursor:"pointer",borderLeft:"3px solid "+stage.color}}
                       onMouseEnter={e=>e.currentTarget.style.background=C.accent+"08"}
                       onMouseLeave={e=>e.currentTarget.style.background=C.panel}>
-                      <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</div>
-                      {c.company&&<div style={{fontSize:10,color:C.muted,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.company}</div>}
-                      <div style={{fontSize:10,color:C.faint}}>{c.phone||"—"}</div>
+                      <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.nome_formatado||c.nome}</div>
+                      {c.vendedor&&<div style={{fontSize:10,color:C.muted,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>👤 {c.vendedor}</div>}
+                      <div style={{fontSize:10,color:C.faint}}>{c.celular||c.whatsapp||"—"}</div>
+                      {c.data_cadastro_fmt&&<div style={{fontSize:10,color:C.faint,marginTop:2}}>📅 {c.data_cadastro_fmt}</div>}
                     </div>
                   ))}
                   {cols.length===0&&<div style={{fontSize:11,color:C.faint,textAlign:"center",padding:"20px 0"}}>Vazio</div>}
@@ -6697,11 +6655,8 @@ function PosVenda({ currentUser }) {
 
       {/* Modal detalhe cliente */}
       {sel&&(()=>{
-        const stage=getStage(sel);
-        // Histórico de jornada deste lead
-        const history = leadStages
-          .filter(ls=>ls.lead_id===sel.id)
-          .sort((a,b)=>new Date(b.entered_at)-new Date(a.entered_at));
+        const selStatus = sel.status_envio||"Aguardando";
+        const selColor  = selStatus==="Aguardando"?"#6B7280":selStatus==="Enviado"?"#3B82F6":selStatus==="Respondeu"?"#F59E0B":selStatus==="Finalizado"?"#4ADE80":"#F87171";
         return (
           <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(6,14,28,0.85)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
             onClick={()=>setSel(null)}>
@@ -6711,9 +6666,9 @@ function PosVenda({ currentUser }) {
               {/* Cabeçalho */}
               <div style={{padding:"20px 24px 16px",borderBottom:"1px solid "+C.border,display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                 <div>
-                  <div style={{fontSize:16,fontWeight:800,color:C.text}}>{sel.name}</div>
-                  {sel.company&&<div style={{fontSize:12,color:C.muted,marginTop:2}}>{sel.company}</div>}
-                  <span style={{fontSize:10,color:stage.color,background:stage.color+"18",padding:"2px 10px",borderRadius:20,fontWeight:700,marginTop:6,display:"inline-block"}}>{stage.name}</span>
+                  <div style={{fontSize:16,fontWeight:800,color:C.text}}>{sel.nome_formatado||sel.nome}</div>
+                  {sel.vendedor&&<div style={{fontSize:12,color:C.muted,marginTop:2}}>👤 {sel.vendedor}</div>}
+                  <span style={{fontSize:10,color:selColor,background:selColor+"18",padding:"2px 10px",borderRadius:20,fontWeight:700,marginTop:6,display:"inline-block"}}>{selStatus}</span>
                 </div>
                 <button onClick={()=>setSel(null)} style={{background:"transparent",border:"none",color:C.muted,fontSize:20,cursor:"pointer"}}>✕</button>
               </div>
@@ -6722,77 +6677,55 @@ function PosVenda({ currentUser }) {
               <div style={{padding:"14px 24px",borderBottom:"1px solid "+C.border}}>
                 <div style={{fontSize:11,color:C.faint,fontWeight:700,marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>Contato</div>
                 <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                  {sel.phone&&<div style={{fontSize:13,color:C.text}}>📱 {sel.phone}</div>}
-                  {sel.email&&<div style={{fontSize:13,color:C.text}}>✉️ {sel.email}</div>}
-                  {sel.document&&<div style={{fontSize:12,color:C.muted}}>🪪 {sel.document}</div>}
-                  {sel.assigned_to&&<div style={{fontSize:13,color:C.text}}>👤 {sel.assigned_to}</div>}
-                  {sel.channel&&<div style={{fontSize:12,color:C.muted}}>📡 Canal: {sel.channel}</div>}
+                  {(sel.celular||sel.whatsapp)&&<div style={{fontSize:13,color:C.text}}>📱 {sel.celular||sel.whatsapp}</div>}
+                  {sel.cpf_cnpj&&<div style={{fontSize:12,color:C.muted}}>🪪 {sel.cpf_cnpj}</div>}
+                  {sel.data_cadastro_fmt&&<div style={{fontSize:12,color:C.muted}}>📅 Cadastro: {sel.data_cadastro_fmt}</div>}
                 </div>
               </div>
 
-              {/* Mover estágio */}
+              {/* Atualizar status */}
               <div style={{padding:"14px 24px",borderBottom:"1px solid "+C.border}}>
-                <div style={{fontSize:11,color:C.faint,fontWeight:700,marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>Mover estágio</div>
+                <div style={{fontSize:11,color:C.faint,fontWeight:700,marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>Status do acionamento</div>
                 <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                  {PV_STAGES.map(st=>{
-                    const active=stage.id===st.id;
+                  {PV_STATUS.map(st=>{
+                    const active=selStatus===st;
+                    const stColor2=st==="Aguardando"?"#6B7280":st==="Enviado"?"#3B82F6":st==="Respondeu"?"#F59E0B":st==="Finalizado"?"#4ADE80":"#F87171";
                     return (
-                      <div key={st.id} onClick={()=>updateStatus(sel,st.id)}
-                        style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,cursor:"pointer",border:"1px solid "+(active?st.color:C.border),background:active?(st.color+"12"):"transparent",transition:"all 0.15s"}}>
-                        <div style={{width:8,height:8,borderRadius:"50%",background:active?st.color:C.border,flexShrink:0}}/>
-                        <span style={{fontSize:12,fontWeight:active?700:400,color:active?st.color:C.muted}}>{st.name}</span>
-                        {active&&<span style={{marginLeft:"auto",fontSize:10,color:st.color,fontWeight:700}}>✓ Atual</span>}
+                      <div key={st} onClick={()=>updateStatus(sel,st)}
+                        style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,cursor:"pointer",border:"1px solid "+(active?stColor2:C.border),background:active?(stColor2+"12"):"transparent",transition:"all 0.15s"}}>
+                        <div style={{width:8,height:8,borderRadius:"50%",background:active?stColor2:C.border,flexShrink:0}}/>
+                        <span style={{fontSize:12,fontWeight:active?700:400,color:active?stColor2:C.muted}}>{st}</span>
+                        {active&&<span style={{marginLeft:"auto",fontSize:10,color:stColor2,fontWeight:700}}>✓ Atual</span>}
                       </div>
                     );
                   })}
                 </div>
               </div>
 
-              {/* Histórico da jornada */}
-              {history.length>0&&(
-                <div style={{padding:"14px 24px",borderBottom:"1px solid "+C.border}}>
-                  <div style={{fontSize:11,color:C.faint,fontWeight:700,marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>Jornada</div>
-                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                    {history.slice(0,6).map((h,i)=>{
-                      const hStage=PV_STAGES.find(s=>s.id===h.stage_id);
-                      const dt=new Date(h.entered_at);
-                      return (
-                        <div key={h.id||i} style={{display:"flex",alignItems:"center",gap:8,fontSize:11}}>
-                          <div style={{width:6,height:6,borderRadius:"50%",background:hStage?.color||C.muted,flexShrink:0}}/>
-                          <span style={{color:hStage?.color||C.muted,fontWeight:600}}>{hStage?.name||h.stage_id}</span>
-                          <span style={{color:C.faint,marginLeft:"auto"}}>{dt.toLocaleDateString("pt-BR")} {dt.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
               {/* Ações */}
               <div style={{padding:"14px 24px",display:"flex",gap:8,flexWrap:"wrap"}}>
-                {sel.phone&&(
+                {(sel.celular||sel.whatsapp)&&(
                   <button onClick={()=>{
-                    const raw=(sel.phone||"").replace(/\D/g,"");
+                    const raw=((sel.celular||sel.whatsapp)||"").replace(/\D/g,"");
                     const phone=raw.startsWith("55")?raw:"55"+raw;
                     window.open("https://api.whatsapp.com/send?phone="+phone,"_blank");
                   }} style={{...btnP,flex:1,padding:"9px",fontSize:12,background:"linear-gradient(135deg,#25D366,#128C7E)"}}>📱 WhatsApp</button>
                 )}
-                {sel.email&&<button onClick={()=>window.open("mailto:"+sel.email,"_blank")} style={{...btnP,flex:1,padding:"9px",fontSize:12,background:"linear-gradient(135deg,#3B82F6,#1D4ED8)"}}>✉️ Email</button>}
-                <button onClick={()=>{setSel(null);setShowAgForm(sel);}} style={{...btnG,flex:1,padding:"9px",fontSize:12}}>📅 Agendar</button>
+                <button onClick={()=>setSel(null)} style={{...btnG,flex:1,padding:"9px",fontSize:12}}>✕ Fechar</button>
               </div>
             </div>
           </div>
         );
       })()}
 
-      {/* Modal: Agendar acionamento */}
+      {/* Modal: Re-agendar acionamento via pos_venda_agenda */}
       {showAgForm&&(
         <div style={{position:"fixed",inset:0,zIndex:600,background:"rgba(6,14,28,0.88)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
           onClick={()=>setShowAgForm(null)}>
           <div style={{background:C.panel,border:"1px solid "+C.border,borderRadius:16,padding:24,width:"100%",maxWidth:400,boxShadow:"0 24px 64px rgba(0,0,0,0.6)"}}
             onClick={e=>e.stopPropagation()}>
-            <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:4}}>📅 Agendar acionamento</div>
-            <div style={{fontSize:12,color:C.muted,marginBottom:20}}>{showAgForm.name}</div>
+            <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:4}}>📅 Novo acionamento</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:20}}>{showAgForm.nome_formatado||showAgForm.nome}</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
               <div>
                 <div style={lbl}>Data *</div>
@@ -6803,16 +6736,6 @@ function PosVenda({ currentUser }) {
                 <input type="time" value={agForm.hora} onChange={e=>setAgForm(a=>({...a,hora:e.target.value}))} style={inp}/>
               </div>
             </div>
-            <div style={{marginBottom:12}}>
-              <div style={lbl}>Canal do contato</div>
-              <select value={agForm.tipo} onChange={e=>setAgForm(a=>({...a,tipo:e.target.value}))} style={inp}>
-                <option value="whatsapp">WhatsApp</option>
-                <option value="ligacao">Ligação</option>
-                <option value="email">Email</option>
-                <option value="reuniao">Reunião</option>
-                <option value="visita">Visita</option>
-              </select>
-            </div>
             <div style={{marginBottom:20}}>
               <div style={lbl}>Observação</div>
               <textarea value={agForm.obs} onChange={e=>setAgForm(a=>({...a,obs:e.target.value}))} rows={2} placeholder="Pauta, objetivo..." style={{...inp,resize:"vertical"}}/>
@@ -6820,19 +6743,29 @@ function PosVenda({ currentUser }) {
             <div style={{display:"flex",gap:10}}>
               <button onClick={()=>setShowAgForm(null)} style={{...btnG,flex:1,padding:"10px"}}>Cancelar</button>
               <button
-                disabled={!agForm.data||!agForm.hora}
+                disabled={!agForm.data||!agForm.hora||saving}
                 onClick={async()=>{
-                  const notaAg=`[Agendamento: ${agForm.data} ${agForm.hora} via ${agForm.tipo}${agForm.obs?" — "+agForm.obs:""}]`;
-                  const notaNova=(showAgForm.notes||"")+" "+notaAg;
+                  const dataAg = new Date(agForm.data+"T"+agForm.hora+":00").toISOString();
                   try{
-                    await sbFetch("leads?id=eq."+showAgForm.id+"&tenant_id=eq."+tenantId,"PATCH",{notes:notaNova.trim()});
-                    setClientes(cs=>cs.map(c=>c.id===showAgForm.id?{...c,notes:notaNova.trim()}:c));
-                  }catch(e){}
+                    setSaving(true);
+                    await sbFetch("pos_venda_agenda","POST",{
+                      tenant_id: tenantId,
+                      nome: showAgForm.nome,
+                      telefone: showAgForm.celular||showAgForm.whatsapp||"",
+                      cpf_cnpj: showAgForm.cpf_cnpj||null,
+                      vendedor: showAgForm.vendedor||null,
+                      data_agendamento: dataAg,
+                      status: "pendente",
+                      created_at: new Date().toISOString(),
+                    });
+                    notify("✅ Acionamento agendado!");
+                  }catch(e){ setError("Erro ao agendar: "+e.message); }
+                  finally{ setSaving(false); }
                   setAgForm({data:"",hora:"",tipo:"whatsapp",obs:""});
                   setShowAgForm(null);
                 }}
                 style={{...btnP,flex:2,padding:"10px",fontSize:13,fontWeight:700,opacity:(!agForm.data||!agForm.hora)?0.5:1}}>
-                💾 Salvar agendamento
+                {saving?"⟳ Salvando...":"💾 Agendar acionamento"}
               </button>
             </div>
           </div>
@@ -6868,15 +6801,15 @@ function PosVenda({ currentUser }) {
                         const cols = row.split(/[;,]/);
                         return {
                           _id: Date.now()+Math.random(),
-                          name: getCol(cols,["nome","name","cliente","razao_social","razão social"]),
-                          phone: getCol(cols,["telefone","celular","fone","phone","tel"]),
-                          company: getCol(cols,["empresa","company","razao_social"]),
-                          email: getCol(cols,["email","e-mail"]),
-                          document: getCol(cols,["cpf","cnpj","cpf_cnpj","documento"]),
-                          assigned_to: getCol(cols,["vendedor","seller","responsavel"])||form.assigned_to,
-                          channel: getCol(cols,["canal","channel"])||"whatsapp",
+                          nome: getCol(cols,["nome","name","cliente","razao_social","razão social"]),
+                          telefone: getCol(cols,["telefone","celular","fone","phone","tel"]),
+                          cpf_cnpj: getCol(cols,["cpf","cnpj","cpf_cnpj","documento"]),
+                          vendedor: getCol(cols,["vendedor","seller","responsavel"])||form.vendedor,
+                          data_relacionamento: getCol(cols,["data_relacionamento","data relacionamento","data"]),
+                          data_agendamento: form.data_agendamento,
+                          hora_agendamento: form.hora_agendamento,
                         };
-                      }).filter(r=>r.name&&r.phone);
+                      }).filter(r=>r.nome&&r.telefone);
                       setLote(l=>[...l,...imported]);
                     } catch(err) { setError("Erro ao importar: "+err.message); }
                     e.target.value="";
@@ -6885,44 +6818,45 @@ function PosVenda({ currentUser }) {
             </div>
 
             <div style={{fontSize:10,color:C.faint,marginBottom:12,padding:"6px 10px",background:C.sidebar,borderRadius:6}}>
-              📋 CSV: colunas <strong>nome</strong>, <strong>telefone</strong> (obrigatórios) + empresa, email, cpf_cnpj, vendedor, canal (opcionais)
+              📋 CSV: colunas <strong>nome</strong>, <strong>telefone</strong> (obrigatórios) + cpf_cnpj, vendedor, data_relacionamento (opcionais)
             </div>
 
             {/* Formulário */}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}} className="mob-grid-1">
               <div>
                 <div style={lbl}>Nome *</div>
-                <input value={form.name} onChange={e=>f("name",e.target.value)} placeholder="Nome completo" style={inp}/>
+                <input value={form.nome} onChange={e=>f("nome",e.target.value)} placeholder="Nome completo" style={inp}/>
               </div>
               <div>
                 <div style={lbl}>Telefone com DDD *</div>
-                <input value={form.phone} onChange={e=>f("phone",e.target.value)} placeholder="11999999999" style={inp}/>
-              </div>
-              <div>
-                <div style={lbl}>Empresa</div>
-                <input value={form.company} onChange={e=>f("company",e.target.value)} placeholder="Razão social" style={inp}/>
-              </div>
-              <div>
-                <div style={lbl}>Email</div>
-                <input value={form.email} onChange={e=>f("email",e.target.value)} placeholder="email@empresa.com" style={inp}/>
+                <input value={form.telefone} onChange={e=>f("telefone",e.target.value)} placeholder="11999999999" style={inp}/>
               </div>
               <div>
                 <div style={lbl}>CPF/CNPJ</div>
-                <input value={form.document} onChange={e=>f("document",e.target.value)} placeholder="000.000.000-00" style={inp}/>
+                <input value={form.cpf_cnpj} onChange={e=>f("cpf_cnpj",e.target.value)} placeholder="000.000.000-00" style={inp}/>
               </div>
               <div>
                 <div style={lbl}>Vendedor responsável</div>
-                <input value={form.assigned_to} onChange={e=>f("assigned_to",e.target.value)} placeholder="Nome do vendedor" style={inp}/>
+                <input value={form.vendedor} onChange={e=>f("vendedor",e.target.value)} placeholder="Nome do vendedor" style={inp}/>
               </div>
               <div>
-                <div style={lbl}>Canal</div>
-                <select value={form.channel} onChange={e=>f("channel",e.target.value)} style={inp}>
-                  <option value="whatsapp">WhatsApp</option>
-                  <option value="email">Email</option>
-                  <option value="telefone">Telefone</option>
-                  <option value="sms">SMS</option>
-                  <option value="outro">Outro</option>
-                </select>
+                <div style={lbl}>Data de relacionamento</div>
+                <input type="date" value={form.data_relacionamento} onChange={e=>f("data_relacionamento",e.target.value)} style={inp}/>
+              </div>
+            </div>
+
+            {/* Agendamento — obrigatório */}
+            <div style={{padding:"12px 14px",background:C.accent+"12",border:"1px solid "+C.accent+"33",borderRadius:10,marginBottom:14}}>
+              <div style={{fontSize:12,fontWeight:700,color:C.accent,marginBottom:10}}>📅 Data e horário do acionamento *</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                <div>
+                  <div style={lbl}>Data *</div>
+                  <input type="date" value={form.data_agendamento} onChange={e=>f("data_agendamento",e.target.value)} style={inp}/>
+                </div>
+                <div>
+                  <div style={lbl}>Horário *</div>
+                  <input type="time" value={form.hora_agendamento} onChange={e=>f("hora_agendamento",e.target.value)} style={inp}/>
+                </div>
               </div>
             </div>
 
@@ -6940,9 +6874,9 @@ function PosVenda({ currentUser }) {
                   {lote.map(item=>(
                     <div key={item._id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:C.sidebar,borderRadius:8,border:"1px solid "+C.border}}>
                       <div style={{flex:1}}>
-                        <span style={{fontSize:12,fontWeight:700,color:C.text}}>{item.name}</span>
-                        <span style={{fontSize:11,color:C.muted,marginLeft:8}}>{item.phone}</span>
-                        {item.company&&<span style={{fontSize:10,color:C.faint,marginLeft:8}}>{item.company}</span>}
+                        <span style={{fontSize:12,fontWeight:700,color:C.text}}>{item.nome}</span>
+                        <span style={{fontSize:11,color:C.muted,marginLeft:8}}>{item.telefone}</span>
+                        {item.cpf_cnpj&&<span style={{fontSize:10,color:C.faint,marginLeft:8}}>{item.cpf_cnpj}</span>}
                       </div>
                       <button onClick={()=>setLote(l=>l.filter(x=>x._id!==item._id))}
                         style={{background:"transparent",border:"none",color:"#F87171",cursor:"pointer",fontSize:14}}>✕</button>
