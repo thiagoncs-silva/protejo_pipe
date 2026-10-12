@@ -1624,7 +1624,7 @@ function CentralDecisao({ leads, onSetPage, onAcionar, leadStages=[] }) {
 }
 
 function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isMaster=false}) {
-  const [modTab, setModTab] = useState("todos"); // todos | prospeccao | receptivo | pos_venda
+  const [modTab, setModTab] = useState("todos"); // todos | prospeccao | receptivo | pos_venda | reativacao | ativo
   const [posVendaData, setPosVendaData] = useState([]);
   const [leadStages, setLeadStages] = useState([]); // dados reais de lead_stages
 
@@ -1638,24 +1638,24 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
       .catch(()=>{});
   },[tenantId]);
 
-  // Carrega dados de pós-venda do Supabase (agora via leads com module=pos_venda)
+  // Carrega dados de pós-venda do Supabase sempre que tenantId muda
   useEffect(()=>{
-    if(modTab!=="pos_venda"&&modTab!=="todos") return;
     if(!tenantId) return;
     sbFetch("leads?select=*&module=eq.pos_venda&tenant_id=eq."+tenantId+"&order=created_at.desc")
       .then(rows=>setPosVendaData(Array.isArray(rows)?rows:[]))
       .catch(()=>{});
-  },[modTab, tenantId]);
+  },[tenantId]);
 
   // Filtros por módulo — pos_venda agora usa leads com module=pos_venda
   const proLeads  = leads.filter(l=>!l.module||l.module==="prospeccao");
   const recLeads  = leads.filter(l=>l.module==="receptivo");
   const posLeads  = posVendaData; // leads com module=pos_venda (carregados separado)
-
+  const reaLeads  = leads.filter(l=>l.module==="reativacao");
   const filteredLeads = modTab==="todos"      ? leads
     : modTab==="prospeccao"                   ? proLeads
     : modTab==="receptivo"                    ? recLeads
     : modTab==="pos_venda"                    ? [] // pos_venda usa posLeads separado
+    : modTab==="reativacao"                   ? reaLeads
     : leads;
 
   const fl = filteredLeads;
@@ -1695,7 +1695,7 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
     ? posLeads.filter(c=>["finalizado","agendou"].includes(getPvStageId(c))).length
     : countByStage("s8");
   const neg   = isPosVenda
-    ? posLeads.filter(c=>["em_conversa","respondeu"].includes(getPvStageId(c))).length
+    ? posLeads.filter(c=>["em_conversa","agendou"].includes(getPvStageId(c))).length
     : (countByStage("s5")+countByStage("s7"));
   const novos = isPosVenda
     ? posLeads.filter(c=>getPvStageId(c)==="aguardando").length
@@ -1721,6 +1721,7 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
     {id:"prospeccao", label:"🎯 Prospecção",   count:proLeads.length,   color:"#3B82F6"},
     {id:"receptivo",  label:"📥 Receptivo",    count:recLeads.length,   color:"#8B5CF6"},
     {id:"pos_venda",  label:"🤝 Pós-venda",    count:posLeads.length,   color:"#4ADE80"},
+    {id:"reativacao", label:"🔄 Reativação",   count:reaLeads.length,   color:"#F59E0B"},
   ];
 
   return (
@@ -1755,15 +1756,16 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
 
       {/* Visão total — resumo de módulos */}
       {modTab==="todos"&&(
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}} className="mob-grid-1">
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}} className="mob-grid-1">
           {[
-            {label:"🎯 Prospecção", leads:proLeads, color:"#3B82F6", page:"crm"},
-            {label:"📥 Receptivo",  leads:recLeads, color:"#8B5CF6", page:"receptivo"},
-            {label:"🤝 Pós-venda",  leads:posLeads, color:"#4ADE80", page:"pos_venda", isPV:true},
+            {label:"🎯 Prospecção", leads:proLeads,   color:"#3B82F6", page:"crm"},
+            {label:"📥 Receptivo",  leads:recLeads,   color:"#8B5CF6", page:"receptivo"},
+            {label:"🤝 Pós-venda",  leads:posLeads,   color:"#4ADE80", page:"pos_venda", isPV:true},
+            {label:"🔄 Reativação", leads:reaLeads,   color:"#F59E0B", page:"reativacao"},
           ].map(mod=>{
             const fechados = mod.isPV
               ? mod.leads.filter(l=>["finalizado","agendou"].includes(getPvStageId(l))).length
-              : mod.leads.filter(l=>["Contratou","Fechado"].includes(l.status)).length;
+              : mod.leads.filter(l=>["Contratou","Fechado","finalizado"].includes(l.status)).length;
             const taxa2 = mod.leads.length?Math.round((fechados/mod.leads.length)*100):0;
             return (
               <div key={mod.label} onClick={()=>onSetPage(mod.page)}
@@ -1935,7 +1937,7 @@ function CompanyProfile({profile, onSave}) {
 }
 
 // ─── SEARCH ───────────────────────────────────────────────────────────────────
-function SearchLeads({onLeadsFound, existingLeads=[], profile={}, currentUser=null, ownerWebhook=""}) {
+function SearchLeads({onLeadsFound, onAddToProsp=null, existingLeads=[], profile={}, currentUser=null, ownerWebhook=""}) {
   const [segmento, setSegmento] = useState("");
   const [city,     setCity]     = useState(profile.city||"São Paulo");
   const [qty,      setQty]      = useState("10");
@@ -2108,17 +2110,33 @@ function SearchLeads({onLeadsFound, existingLeads=[], profile={}, currentUser=nu
                   </div>
                   {l.notes&&<div style={{fontSize:11,color:C.dim,marginTop:6,fontStyle:"italic"}}>{l.notes}</div>}
                 </div>
-                <button onClick={()=>onLeadsFound([l])}
-                  style={{...btnP,padding:"6px 14px",fontSize:11,flexShrink:0,marginLeft:12}}>
-                  + Adicionar ao CRM
-                </button>
+                <div style={{display:"flex",flexDirection:"column",gap:6,flexShrink:0,marginLeft:12}}>
+                  {onAddToProsp&&(
+                    <button onClick={()=>onAddToProsp(l)}
+                      style={{...btnP,padding:"6px 12px",fontSize:11,background:"linear-gradient(135deg,#3B82F6,#1D4ED8)"}}>
+                      🎯 Add Prospecção
+                    </button>
+                  )}
+                  <button onClick={()=>onLeadsFound([l])}
+                    style={{...btnG,padding:"6px 12px",fontSize:11}}>
+                    + CRM geral
+                  </button>
+                </div>
               </div>
             </div>
           ))}
-          <button onClick={()=>results.forEach(l=>onLeadsFound([l]))}
-            style={{...btnP,width:"100%",padding:"10px",fontSize:12,marginTop:4,background:"linear-gradient(135deg,#059669,#047857)"}}>
-            ✅ Adicionar Todos ao CRM ({results.length})
-          </button>
+          <div style={{display:"flex",gap:8,marginTop:4}}>
+            {onAddToProsp&&(
+              <button onClick={()=>results.forEach(l=>onAddToProsp(l))}
+                style={{...btnP,flex:1,padding:"10px",fontSize:12,background:"linear-gradient(135deg,#3B82F6,#1D4ED8)"}}>
+                🎯 Todos à Prospecção ({results.length})
+              </button>
+            )}
+            <button onClick={()=>results.forEach(l=>onLeadsFound([l]))}
+              style={{...btnG,flex:1,padding:"10px",fontSize:12}}>
+              ✅ Todos ao CRM ({results.length})
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -5549,7 +5567,15 @@ const DEFAULT_PROFILE={ companyName:"", segment:"", city:"São Paulo", founded:"
 function Chev({o}) { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{transition:"transform 0.2s",transform:o?"none":"rotate(180deg)"}}><path d="M15 18l-6-6 6-6"/></svg>; }
 
 // ─── MÓDULO REATIVAÇÃO ────────────────────────────────────────────────────────
+const REAT_STAGES = [
+  {id:"morno",   name:"Morno",     color:"#FBBF24", icon:"🌡️", desc:"15-30 dias", min:15, max:30},
+  {id:"frio",    name:"Frio",      color:"#F59E0B", icon:"🧊", desc:"30-45 dias", min:30, max:45},
+  {id:"inativo", name:"Inativo",   color:"#F87171", icon:"❄️", desc:"45+ dias",   min:45, max:9999},
+  {id:"proposta",name:"Com proposta",color:"#8B5CF6",icon:"📄",desc:"Proposta enviada",min:0,max:9999,custom:true},
+];
+
 function Reativacao({ leads, onUpdateLead, onSetPage }) {
+  const [tab, setTab]       = useState("kanban");
   const [filtro, setFiltro] = useState("todos");
   const [sel, setSel]       = useState(null);
 
@@ -5588,6 +5614,14 @@ function Reativacao({ leads, onUpdateLead, onSetPage }) {
 
   const getHeatColor = (dias) => dias>=45?"#F87171":dias>=30?"#F59E0B":dias>=15?"#FBBF24":"#6B7280";
 
+  const getReatStage = (l) => {
+    if(["Proposta enviada","Negociando"].includes(l.status)) return REAT_STAGES[3];
+    const dias = getDiasSemContato(l);
+    if(dias>=45) return REAT_STAGES[2];
+    if(dias>=30) return REAT_STAGES[1];
+    return REAT_STAGES[0];
+  };
+
   return (
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20,flexWrap:"wrap",gap:12}}>
@@ -5599,61 +5633,118 @@ function Reativacao({ leads, onUpdateLead, onSetPage }) {
       </div>
 
       {/* KPIs */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}} className="mob-grid-1">
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}} className="mob-grid-2">
         <div style={{...card({padding:14}),borderLeft:"4px solid #FBBF24"}}>
           <div style={{fontSize:22,fontWeight:900,color:"#FBBF24"}}>{inativos.filter(l=>getDiasSemContato(l)>=15&&getDiasSemContato(l)<30).length}</div>
-          <div style={{fontSize:11,color:C.muted}}>🌡️ Mornos (15-30d)</div>
+          <div style={{fontSize:11,color:C.muted}}>🌡️ Mornos</div>
         </div>
         <div style={{...card({padding:14}),borderLeft:"4px solid #F59E0B"}}>
           <div style={{fontSize:22,fontWeight:900,color:"#F59E0B"}}>{inativos.filter(l=>getDiasSemContato(l)>=30&&getDiasSemContato(l)<45).length}</div>
-          <div style={{fontSize:11,color:C.muted}}>🧊 Frios (30-45d)</div>
+          <div style={{fontSize:11,color:C.muted}}>🧊 Frios</div>
         </div>
         <div style={{...card({padding:14}),borderLeft:"4px solid #F87171"}}>
           <div style={{fontSize:22,fontWeight:900,color:"#F87171"}}>{inativos.filter(l=>getDiasSemContato(l)>=45).length}</div>
-          <div style={{fontSize:11,color:C.muted}}>❄️ Inativos (45d+)</div>
+          <div style={{fontSize:11,color:C.muted}}>❄️ Inativos</div>
+        </div>
+        <div style={{...card({padding:14}),borderLeft:"4px solid #8B5CF6"}}>
+          <div style={{fontSize:22,fontWeight:900,color:"#8B5CF6"}}>{inativos.filter(l=>["Proposta enviada","Negociando"].includes(l.status)).length}</div>
+          <div style={{fontSize:11,color:C.muted}}>📄 Com proposta</div>
         </div>
       </div>
 
-      {/* Filtros */}
-      <div style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:4}}>
-        {FILTROS.map(f=>(
-          <button key={f.id} onClick={()=>setFiltro(f.id)}
-            style={{padding:"6px 14px",borderRadius:20,border:"1px solid "+(filtro===f.id?C.accent:C.border),background:filtro===f.id?(C.accent+"18"):"transparent",color:filtro===f.id?C.accent:C.muted,fontSize:11,fontWeight:filtro===f.id?700:400,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
-            {f.label} <span style={{fontWeight:900}}>{f.count}</span>
+      {/* Tabs */}
+      <div style={{display:"flex",gap:0,marginBottom:20,border:"1px solid "+C.border,borderRadius:10,overflow:"hidden"}}>
+        {[["kanban","📋 Kanban"],["lista","📄 Lista"]].map(([v,l])=>(
+          <button key={v} onClick={()=>setTab(v)}
+            style={{flex:1,padding:"10px",border:"none",background:tab===v?C.accent:"transparent",color:tab===v?"#fff":C.muted,fontWeight:tab===v?700:400,fontSize:12,cursor:"pointer",transition:"all 0.15s"}}>
+            {l}
           </button>
         ))}
       </div>
 
-      {/* Lista */}
-      {filtrados.length===0
-        ?<div style={{...card({padding:40}),textAlign:"center",color:C.muted}}>
-          <div style={{fontSize:32,marginBottom:12}}>🎉</div>
-          <div>Nenhum lead inativo nesse filtro!</div>
-        </div>
-        :<div style={card({padding:0,overflow:"hidden"})}>
-          {filtrados.map((l,i)=>{
-            const dias = getDiasSemContato(l);
-            const cor = getHeatColor(dias);
+      {/* ── KANBAN ── */}
+      {tab==="kanban"&&(
+        <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8}}>
+          {REAT_STAGES.map(stage=>{
+            const stageLeads = inativos.filter(l=>getReatStage(l).id===stage.id);
             return (
-              <div key={l.id} onClick={()=>setSel(l)}
-                style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<filtrados.length-1?"1px solid "+C.border:"none",cursor:"pointer",transition:"background 0.1s"}}
-                onMouseEnter={e=>e.currentTarget.style.background=C.accent+"08"}
-                onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                <div style={{width:40,height:40,borderRadius:10,background:cor+"18",border:"1px solid "+cor+"33",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                  <div style={{fontSize:11,fontWeight:900,color:cor}}>{dias}d</div>
+              <div key={stage.id} style={{minWidth:220,flex:"0 0 220px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,padding:"8px 12px",background:stage.color+"18",borderRadius:8,border:"1px solid "+stage.color+"33"}}>
+                  <span>{stage.icon}</span>
+                  <span style={{fontSize:12,fontWeight:700,color:stage.color}}>{stage.name}</span>
+                  <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:stage.color,background:stage.color+"22",padding:"1px 8px",borderRadius:20}}>{stageLeads.length}</span>
                 </div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>{l.name}</div>
-                  <div style={{fontSize:11,color:C.muted}}>{l.status} · {l.city}</div>
-                </div>
-                <div style={{fontSize:10,color:cor,fontWeight:700,background:cor+"18",padding:"3px 10px",borderRadius:20,whiteSpace:"nowrap"}}>
-                  {dias>=45?"❄️ Inativo":dias>=30?"🧊 Frio":"🌡️ Morno"}
+                <div style={{fontSize:9,color:stage.color,marginBottom:8,textAlign:"center"}}>{stage.desc}</div>
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {stageLeads.map(l=>{
+                    const dias = getDiasSemContato(l);
+                    return (
+                      <div key={l.id} onClick={()=>setSel(l)}
+                        style={{...card({padding:12}),border:"1px solid "+C.border,cursor:"pointer",transition:"all 0.15s"}}
+                        onMouseEnter={e=>e.currentTarget.style.borderColor=stage.color}
+                        onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+                        <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:4}}>{l.name}</div>
+                        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                          <span style={{fontSize:9,color:stage.color,background:stage.color+"18",padding:"1px 7px",borderRadius:20,fontWeight:700}}>{dias}d sem contato</span>
+                        </div>
+                        {l.status&&<div style={{fontSize:10,color:C.faint}}>{l.status}</div>}
+                        {l.city&&<div style={{fontSize:10,color:C.faint}}>{l.city}</div>}
+                      </div>
+                    );
+                  })}
+                  {stageLeads.length===0&&(
+                    <div style={{padding:"16px 8px",textAlign:"center",color:C.faint,fontSize:11,border:"1px dashed "+C.border,borderRadius:8}}>Vazio</div>
+                  )}
                 </div>
               </div>
             );
           })}
         </div>
-      }
+      )}
+
+      {/* ── LISTA ── */}
+      {tab==="lista"&&(
+        <div>
+          <div style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:4}}>
+            {FILTROS.map(f=>(
+              <button key={f.id} onClick={()=>setFiltro(f.id)}
+                style={{padding:"6px 14px",borderRadius:20,border:"1px solid "+(filtro===f.id?C.accent:C.border),background:filtro===f.id?(C.accent+"18"):"transparent",color:filtro===f.id?C.accent:C.muted,fontSize:11,fontWeight:filtro===f.id?700:400,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+                {f.label} <span style={{fontWeight:900}}>{f.count}</span>
+              </button>
+            ))}
+          </div>
+          {filtrados.length===0
+            ?<div style={{...card({padding:40}),textAlign:"center",color:C.muted}}>
+              <div style={{fontSize:32,marginBottom:12}}>🎉</div>
+              <div>Nenhum lead inativo nesse filtro!</div>
+            </div>
+            :<div style={card({padding:0,overflow:"hidden"})}>
+              {filtrados.map((l,i)=>{
+                const dias = getDiasSemContato(l);
+                const cor = getHeatColor(dias);
+                const rStage = getReatStage(l);
+                return (
+                  <div key={l.id} onClick={()=>setSel(l)}
+                    style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<filtrados.length-1?"1px solid "+C.border:"none",cursor:"pointer",transition:"background 0.1s"}}
+                    onMouseEnter={e=>e.currentTarget.style.background=C.accent+"08"}
+                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <div style={{width:40,height:40,borderRadius:10,background:rStage.color+"18",border:"1px solid "+rStage.color+"33",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      <div style={{fontSize:11,fontWeight:900,color:rStage.color}}>{dias}d</div>
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:700,color:C.text}}>{l.name}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{l.status} · {l.city}</div>
+                    </div>
+                    <div style={{fontSize:10,color:rStage.color,fontWeight:700,background:rStage.color+"18",padding:"3px 10px",borderRadius:20,whiteSpace:"nowrap"}}>
+                      {rStage.icon} {rStage.name}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          }
+        </div>
+      )}
 
       {/* Modal */}
       {sel&&(
@@ -5690,15 +5781,368 @@ function Reativacao({ leads, onUpdateLead, onSetPage }) {
   );
 }
 
+// ─── MÓDULO PROSPECÇÃO ────────────────────────────────────────────────────────
+const PROSP_STAGES = [
+  {id:"novo",         name:"Novo",           color:"#6B7280", icon:"🆕"},
+  {id:"primeiro_contato", name:"1º Contato", color:"#3B82F6", icon:"📞"},
+  {id:"em_conversa",  name:"Em conversa",    color:"#F59E0B", icon:"💬"},
+  {id:"proposta",     name:"Proposta",       color:"#8B5CF6", icon:"📄"},
+  {id:"fechado",      name:"Fechado",        color:"#4ADE80", icon:"🎉"},
+  {id:"perdido",      name:"Perdido",        color:"#F87171", icon:"❌"},
+];
+
+function Prospeccao({ currentUser, onAddToProsp }) {
+  const [tab, setTab]         = useState("kanban");
+  const [leads, setLeads]     = useState([]);
+  const [leadStages, setLeadStages] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState("");
+  const [sel, setSel]         = useState(null);
+  const [busca, setBusca]     = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving]   = useState(false);
+  const [form, setForm] = useState({
+    name:"", company:"", phone:"", email:"",
+    channel:"whatsapp", notes:"", city:"",
+  });
+
+  const tenantId = currentUser?.tenant_id || "072b33d2-46ff-4bf2-839b-ee5d33fe6cb7";
+  const f = (k,v) => setForm(p=>({...p,[k]:v}));
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [rows, stages] = await Promise.all([
+        sbFetch("leads?select=*&module=eq.prospeccao&tenant_id=eq."+tenantId+"&order=created_at.desc"),
+        sbFetch("lead_stages?select=*&tenant_id=eq."+tenantId+"&order=entered_at.desc"),
+      ]);
+      setLeads(Array.isArray(rows)?rows:[]);
+      setLeadStages(Array.isArray(stages)?stages:[]);
+      setError("");
+    } catch(e) { setError("Erro ao carregar: "+e.message); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(()=>{ load(); },[]);
+
+  // Expõe função para SearchLeads adicionar lead externo
+  useEffect(()=>{
+    if(onAddToProsp) onAddToProsp(addLeadExterno);
+  },[]);
+
+  const latestStageMap = leadStages.reduce((acc,ls)=>{
+    if(!acc[ls.lead_id]||ls.entered_at>acc[ls.lead_id].entered_at) acc[ls.lead_id]=ls;
+    return acc;
+  },{});
+
+  const getStageId = (l) => latestStageMap[l.id]?.stage_id || PROSP_STAGES[0].id;
+  const getStage   = (l) => PROSP_STAGES.find(s=>s.id===getStageId(l)) || PROSP_STAGES[0];
+
+  const moveStage = async (lead, stageId) => {
+    const stage = PROSP_STAGES.find(s=>s.id===stageId);
+    try {
+      await sbFetch("leads?id=eq."+lead.id+"&tenant_id=eq."+tenantId,"PATCH",{status:stage?.name||stageId});
+      await sbFetch("lead_stages","POST",{
+        id:crypto.randomUUID(), lead_id:lead.id, stage_id:stageId,
+        entered_at:new Date().toISOString(), tenant_id:tenantId, actions_done:[]
+      });
+      setLeads(ls=>ls.map(l=>l.id===lead.id?{...l,status:stage?.name||stageId}:l));
+      setLeadStages(ls=>[...ls,{lead_id:lead.id,stage_id:stageId,entered_at:new Date().toISOString(),tenant_id:tenantId}]);
+    } catch(e){}
+  };
+
+  const buildPayload = (data) => ({
+    id: crypto.randomUUID(),
+    name: data.name||data.company||"",
+    company: data.company||"",
+    phone: data.phone||"",
+    email: data.email||"",
+    channel: data.channel||"whatsapp",
+    notes: data.notes||"",
+    city: data.city||"",
+    status: PROSP_STAGES[0].name,
+    module: "prospeccao",
+    tenant_id: tenantId,
+    created_at: new Date().toISOString(),
+    score: data.score||null,
+  });
+
+  const addLeadExterno = async (data) => {
+    // Chamado pelo SearchLeads ao clicar "Add à Prospecção"
+    const payload = buildPayload(data);
+    try {
+      const saved = await sbFetch("leads","POST",payload);
+      const newLead = Array.isArray(saved)&&saved[0] ? saved[0] : payload;
+      await sbFetch("lead_stages","POST",{
+        id:crypto.randomUUID(), lead_id:newLead.id, stage_id:PROSP_STAGES[0].id,
+        entered_at:new Date().toISOString(), tenant_id:tenantId, actions_done:[]
+      });
+      setLeads(ls=>[newLead,...ls]);
+    } catch(e){ setError("Erro ao adicionar lead: "+e.message); }
+  };
+
+  const saveLead = async () => {
+    if(!form.name&&!form.company) return;
+    setSaving(true);
+    try {
+      const payload = buildPayload(form);
+      const saved = await sbFetch("leads","POST",payload);
+      const newLead = Array.isArray(saved)&&saved[0] ? saved[0] : payload;
+      await sbFetch("lead_stages","POST",{
+        id:crypto.randomUUID(), lead_id:newLead.id, stage_id:PROSP_STAGES[0].id,
+        entered_at:new Date().toISOString(), tenant_id:tenantId, actions_done:[]
+      });
+      setLeads(ls=>[newLead,...ls]);
+      setForm({name:"",company:"",phone:"",email:"",channel:"whatsapp",notes:"",city:""});
+      setShowForm(false);
+    } catch(e){ setError("Erro ao salvar: "+e.message); }
+    finally { setSaving(false); }
+  };
+
+  const timeAgo = (d) => {
+    if(!d) return "";
+    const diff=Math.floor((Date.now()-new Date(d).getTime())/60000);
+    if(diff<60) return diff+"min"; if(diff<1440) return Math.floor(diff/60)+"h";
+    return Math.floor(diff/1440)+"d";
+  };
+  const CHANNEL_COLOR = {whatsapp:"#25D366",email:"#3B82F6",ligacao:"#F59E0B",instagram:"#E1306C",indicacao:"#8B5CF6"};
+  const visLeads = leads.filter(l=>!busca||l.name?.toLowerCase().includes(busca.toLowerCase())||l.company?.toLowerCase().includes(busca.toLowerCase()));
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20,flexWrap:"wrap",gap:12}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:800,color:C.text}}>🎯 Prospecção</div>
+          <div style={{fontSize:12,color:C.muted,marginTop:2}}>Leads vindos da busca ou cadastrados manualmente</div>
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="Buscar..." style={{...inp,width:160,padding:"7px 10px",fontSize:12}}/>
+          <button onClick={()=>setShowForm(true)} style={{...btnP,padding:"9px 18px",fontSize:13}}>+ Cadastrar</button>
+        </div>
+      </div>
+
+      {error&&<div style={{...card({padding:12}),color:"#F87171",fontSize:12,marginBottom:16}}>{error}</div>}
+
+      {/* KPIs */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:10,marginBottom:20}} className="mob-grid-2">
+        {PROSP_STAGES.map(s=>(
+          <div key={s.id} style={card({padding:12})}>
+            <div style={{fontSize:20,fontWeight:900,color:s.color}}>{visLeads.filter(l=>getStageId(l)===s.id).length}</div>
+            <div style={{fontSize:10,color:C.muted}}>{s.icon} {s.name}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:"flex",gap:4,marginBottom:20,background:C.panel,border:"1px solid "+C.border,borderRadius:10,padding:4}}>
+        {[["kanban","📋 Kanban"],["lista","📄 Lista"]].map(([id,label])=>(
+          <button key={id} onClick={()=>setTab(id)}
+            style={{flex:1,padding:"8px 12px",borderRadius:7,border:"none",background:tab===id?C.accent:"transparent",color:tab===id?"#fff":C.muted,fontSize:12,fontWeight:tab===id?700:400,cursor:"pointer",transition:"all 0.15s"}}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {loading&&<div style={{textAlign:"center",padding:40,color:C.muted}}>Carregando...</div>}
+
+      {/* ── KANBAN ── */}
+      {!loading&&tab==="kanban"&&(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:10,alignItems:"start"}}>
+          {PROSP_STAGES.map(stage=>{
+            const cols = visLeads.filter(l=>getStageId(l)===stage.id);
+            return (
+              <div key={stage.id}>
+                <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:8,padding:"7px 9px",background:stage.color+"14",border:"1px solid "+stage.color+"30",borderRadius:8}}>
+                  <span style={{fontSize:13}}>{stage.icon}</span>
+                  <span style={{fontSize:11,fontWeight:700,color:stage.color,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{stage.name}</span>
+                  <span style={{fontSize:9,fontWeight:900,color:"#fff",background:stage.color,borderRadius:20,padding:"1px 6px"}}>{cols.length}</span>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:7}}>
+                  {cols.length===0&&<div style={{...card({padding:12}),textAlign:"center",color:C.faint,fontSize:10}}>Vazio</div>}
+                  {cols.map(l=>{
+                    const chColor=CHANNEL_COLOR[l.channel]||C.muted;
+                    return (
+                      <div key={l.id} onClick={()=>setSel(l)}
+                        style={{...card({padding:10}),cursor:"pointer",transition:"transform 0.1s,box-shadow 0.1s"}}
+                        onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 8px 24px rgba(0,0,0,0.3)";}}
+                        onMouseLeave={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow="";}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                          <span style={{fontSize:9,color:chColor,background:chColor+"18",padding:"2px 6px",borderRadius:20,fontWeight:700}}>{l.channel||"whatsapp"}</span>
+                          <span style={{fontSize:9,color:C.faint}}>{timeAgo(l.created_at)}</span>
+                        </div>
+                        <div style={{fontSize:11,fontWeight:700,color:C.text,marginBottom:2}}>{l.name||l.company}</div>
+                        <div style={{fontSize:10,color:C.muted,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.company||"—"}</div>
+                        {l.city&&<div style={{fontSize:9,color:C.faint,marginBottom:7}}>📍 {l.city}</div>}
+                        <select value={getStageId(l)} onChange={e=>{e.stopPropagation();moveStage(l,e.target.value);}}
+                          onClick={e=>e.stopPropagation()}
+                          style={{width:"100%",fontSize:9,background:C.bg,border:"1px solid "+C.border,borderRadius:6,color:C.muted,padding:"3px 4px",cursor:"pointer"}}>
+                          {PROSP_STAGES.map(s=><option key={s.id} value={s.id}>{s.icon} {s.name}</option>)}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── LISTA ── */}
+      {!loading&&tab==="lista"&&(
+        <div style={card({padding:0,overflow:"hidden"})}>
+          {visLeads.length===0
+            ?<div style={{padding:40,textAlign:"center",color:C.muted}}>Nenhum lead em prospecção ainda.</div>
+            :visLeads.map((l,i)=>{
+              const stage=getStage(l);
+              const chColor=CHANNEL_COLOR[l.channel]||C.muted;
+              return (
+                <div key={l.id} onClick={()=>setSel(l)}
+                  style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<visLeads.length-1?"1px solid "+C.border:"none",cursor:"pointer"}}
+                  onMouseEnter={e=>e.currentTarget.style.background=C.accent+"08"}
+                  onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <div style={{width:36,height:36,borderRadius:9,background:stage.color+"18",border:"1px solid "+stage.color+"33",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:16}}>
+                    {stage.icon}
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:700,color:C.text}}>{l.name||l.company}</div>
+                    <div style={{fontSize:11,color:C.muted}}>{l.company||"—"}{l.city?" · 📍"+l.city:""}</div>
+                    {l.email&&<div style={{fontSize:10,color:C.faint}}>✉️ {l.email}</div>}
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
+                    <span style={{fontSize:9,color:stage.color,background:stage.color+"18",padding:"2px 8px",borderRadius:20,fontWeight:700}}>{stage.icon} {stage.name}</span>
+                    <span style={{fontSize:9,color:chColor,background:chColor+"18",padding:"2px 8px",borderRadius:20,fontWeight:700}}>{l.channel||"whatsapp"}</span>
+                  </div>
+                </div>
+              );
+            })
+          }
+        </div>
+      )}
+
+      {/* Modal detalhe */}
+      {sel&&(
+        <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(6,14,28,0.85)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+          onClick={()=>setSel(null)}>
+          <div style={{background:C.panel,border:"1px solid "+C.border,borderRadius:16,padding:24,width:"100%",maxWidth:440,boxShadow:"0 24px 64px rgba(0,0,0,0.6)"}}
+            onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}>
+              <div>
+                <div style={{fontSize:16,fontWeight:800,color:C.text}}>{sel.name||sel.company}</div>
+                {sel.company&&sel.name&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>{sel.company}</div>}
+              </div>
+              <button onClick={()=>setSel(null)} style={{background:"transparent",border:"none",color:C.muted,fontSize:20,cursor:"pointer"}}>✕</button>
+            </div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
+              {sel.city&&<span style={{fontSize:10,color:C.faint,background:C.border,padding:"2px 8px",borderRadius:20}}>📍 {sel.city}</span>}
+              {sel.score&&<span style={{fontSize:10,color:"#4ADE80",background:"#4ADE8018",padding:"2px 8px",borderRadius:20,fontWeight:700}}>Score {sel.score}</span>}
+            </div>
+            {sel.notes&&<div style={{...card({padding:10}),fontSize:11,color:C.dim,marginBottom:12}}>{sel.notes}</div>}
+            <div style={{marginBottom:14}}>
+              <div style={lbl}>Mover estágio</div>
+              <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                {PROSP_STAGES.map(s=>{
+                  const active=getStageId(sel)===s.id;
+                  return (
+                    <div key={s.id} onClick={()=>{moveStage(sel,s.id);setSel(l=>({...l,status:s.name}));}}
+                      style={{padding:"5px 10px",borderRadius:20,cursor:"pointer",fontSize:10,fontWeight:active?700:400,border:"1px solid "+(active?s.color:C.border),background:active?(s.color+"18"):"transparent",color:active?s.color:C.muted}}>
+                      {s.icon} {s.name}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {sel.phone&&(
+                <button onClick={()=>{const r=sel.phone.replace(/\D/g,"");const p=r.startsWith("55")?r:"55"+r;window.open("https://api.whatsapp.com/send?phone="+p,"_blank");}}
+                  style={{...btnP,padding:"9px 14px",fontSize:12,background:"linear-gradient(135deg,#25D366,#128C7E)"}}>📱 WhatsApp</button>
+              )}
+              {sel.email&&(
+                <button onClick={()=>window.open("mailto:"+sel.email,"_blank")}
+                  style={{...btnP,padding:"9px 14px",fontSize:12,background:"linear-gradient(135deg,#3B82F6,#1D4ED8)"}}>✉️ Email</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal cadastro manual */}
+      {showForm&&(
+        <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(6,14,28,0.85)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+          onClick={()=>setShowForm(false)}>
+          <div style={{background:C.panel,border:"1px solid "+C.border,borderRadius:16,padding:24,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 24px 64px rgba(0,0,0,0.6)"}}
+            onClick={e=>e.stopPropagation()}>
+            <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:20}}>🎯 Novo Lead — Prospecção</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+              <div>
+                <div style={lbl}>Nome</div>
+                <input value={form.name} onChange={e=>f("name",e.target.value)} placeholder="Nome do contato" style={inp}/>
+              </div>
+              <div>
+                <div style={lbl}>Empresa *</div>
+                <input value={form.company} onChange={e=>f("company",e.target.value)} placeholder="Razão social / Nome" style={inp}/>
+              </div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+              <div>
+                <div style={lbl}>Telefone</div>
+                <input value={form.phone} onChange={e=>f("phone",e.target.value)} placeholder="(00) 00000-0000" style={inp}/>
+              </div>
+              <div>
+                <div style={lbl}>Email</div>
+                <input value={form.email} onChange={e=>f("email",e.target.value)} placeholder="email@empresa.com" style={inp}/>
+              </div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+              <div>
+                <div style={lbl}>Cidade</div>
+                <input value={form.city} onChange={e=>f("city",e.target.value)} placeholder="São Paulo-SP" style={inp}/>
+              </div>
+              <div>
+                <div style={lbl}>Canal</div>
+                <select value={form.channel} onChange={e=>f("channel",e.target.value)} style={inp}>
+                  <option value="whatsapp">WhatsApp</option>
+                  <option value="email">Email</option>
+                  <option value="ligacao">Ligação</option>
+                  <option value="instagram">Instagram</option>
+                  <option value="indicacao">Indicação</option>
+                </select>
+              </div>
+            </div>
+            <div style={{marginBottom:20}}>
+              <div style={lbl}>Observações</div>
+              <textarea value={form.notes} onChange={e=>f("notes",e.target.value)} rows={3} placeholder="Contexto, origem do lead, observações..." style={{...inp,resize:"vertical"}}/>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>setShowForm(false)} style={{...btnG,flex:1,padding:"10px"}}>Cancelar</button>
+              <button onClick={saveLead} disabled={saving||(!form.name&&!form.company)} style={{...btnP,flex:2,padding:"10px",fontSize:13,fontWeight:700,opacity:saving?0.7:1}}>
+                {saving?"Salvando...":"Adicionar à Prospecção"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── MÓDULO SUPORTE ───────────────────────────────────────────────────────────
+const SUPORTE_STAGES = [
+  {id:"Aberto",        name:"Aberto",        color:"#3B82F6", icon:"📬"},
+  {id:"Em andamento",  name:"Em andamento",  color:"#F59E0B", icon:"🔧"},
+  {id:"Resolvido",     name:"Resolvido",     color:"#4ADE80", icon:"✅"},
+  {id:"Cancelado",     name:"Cancelado",     color:"#F87171", icon:"❌"},
+];
+
 function Suporte({ leads, onUpdateLead, currentUser }) {
   const [tickets, setTickets] = useState([]);
+  const [tab, setTab]         = useState("kanban");
   const [showNew, setShowNew] = useState(false);
   const [form, setForm]       = useState({titulo:"", descricao:"", lead_id:"", prioridade:"Media", canal:"WhatsApp"});
   const [filtro, setFiltro]   = useState("todos");
   const [sel, setSel]         = useState(null);
 
-  // Simulate tickets from local state (would be Supabase in production)
   const PRIORIDADE_COLOR = {Alta:"#F87171", Media:"#F59E0B", Baixa:"#4ADE80"};
   const STATUS_COLOR     = {Aberto:"#3B82F6", "Em andamento":"#F59E0B", Resolvido:"#4ADE80", Cancelado:"#F87171"};
 
@@ -5751,60 +6195,105 @@ function Suporte({ leads, onUpdateLead, currentUser }) {
 
       {/* KPIs */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}} className="mob-grid-2">
-        <div style={card({padding:14})}>
-          <div style={{fontSize:22,fontWeight:900,color:"#3B82F6"}}>{tickets.filter(t=>t.status==="Aberto").length}</div>
-          <div style={{fontSize:11,color:C.muted}}>Abertos</div>
-        </div>
-        <div style={card({padding:14})}>
-          <div style={{fontSize:22,fontWeight:900,color:"#F59E0B"}}>{tickets.filter(t=>t.status==="Em andamento").length}</div>
-          <div style={{fontSize:11,color:C.muted}}>Em andamento</div>
-        </div>
-        <div style={card({padding:14})}>
-          <div style={{fontSize:22,fontWeight:900,color:"#4ADE80"}}>{tickets.filter(t=>t.status==="Resolvido").length}</div>
-          <div style={{fontSize:11,color:C.muted}}>Resolvidos</div>
-        </div>
-        <div style={card({padding:14})}>
-          <div style={{fontSize:22,fontWeight:900,color:"#F87171"}}>{tickets.filter(t=>t.prioridade==="Alta"&&t.status==="Aberto").length}</div>
-          <div style={{fontSize:11,color:C.muted}}>Alta prior. abertos</div>
-        </div>
+        {SUPORTE_STAGES.map(s=>(
+          <div key={s.id} style={card({padding:14})}>
+            <div style={{fontSize:22,fontWeight:900,color:s.color}}>{tickets.filter(t=>t.status===s.id).length}</div>
+            <div style={{fontSize:11,color:C.muted}}>{s.name}</div>
+          </div>
+        ))}
       </div>
 
-      {/* Filtros */}
-      <div style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:4}}>
-        {FILTROS.map(f=>(
-          <button key={f.id} onClick={()=>setFiltro(f.id)}
-            style={{padding:"6px 14px",borderRadius:20,border:"1px solid "+(filtro===f.id?C.accent:C.border),background:filtro===f.id?(C.accent+"18"):"transparent",color:filtro===f.id?C.accent:C.muted,fontSize:11,fontWeight:filtro===f.id?700:400,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
-            {f.label} <span style={{fontWeight:900}}>{f.count}</span>
+      {/* Tabs */}
+      <div style={{display:"flex",gap:4,marginBottom:20,background:C.panel,border:"1px solid "+C.border,borderRadius:10,padding:4}}>
+        {[["kanban","📋 Kanban"],["lista","📄 Lista"]].map(([id,label])=>(
+          <button key={id} onClick={()=>setTab(id)}
+            style={{flex:1,padding:"8px 12px",borderRadius:7,border:"none",background:tab===id?C.accent:"transparent",color:tab===id?"#fff":C.muted,fontSize:12,fontWeight:tab===id?700:400,cursor:"pointer",transition:"all 0.15s"}}>
+            {label}
           </button>
         ))}
       </div>
 
-      {/* Lista */}
-      {filtrados.length===0
-        ?<div style={{...card({padding:40}),textAlign:"center",color:C.muted}}>
-          <div style={{fontSize:32,marginBottom:12}}>🎉</div>
-          <div>{tickets.length===0?"Nenhum ticket criado ainda.":"Nenhum ticket nesse filtro."}</div>
-        </div>
-        :<div style={card({padding:0,overflow:"hidden"})}>
-          {filtrados.map((t,i)=>{
-            const sc = STATUS_COLOR[t.status]||C.muted;
-            const pc = PRIORIDADE_COLOR[t.prioridade]||C.muted;
+      {/* ── KANBAN ── */}
+      {tab==="kanban"&&(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,alignItems:"start"}}>
+          {SUPORTE_STAGES.map(stage=>{
+            const cols = tickets.filter(t=>t.status===stage.id);
             return (
-              <div key={t.id} onClick={()=>setSel(t)}
-                style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<filtrados.length-1?"1px solid "+C.border:"none",cursor:"pointer"}}
-                onMouseEnter={e=>e.currentTarget.style.background=C.accent+"08"}
-                onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                <div style={{width:4,height:40,borderRadius:2,background:pc,flexShrink:0}}/>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>{t.titulo}</div>
-                  <div style={{fontSize:11,color:C.muted}}>{t.lead_name} · {t.user_name} · {t.createdAt?.substring(0,10)}</div>
+              <div key={stage.id}>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,padding:"8px 10px",background:stage.color+"14",border:"1px solid "+stage.color+"30",borderRadius:8}}>
+                  <span style={{fontSize:14}}>{stage.icon}</span>
+                  <span style={{fontSize:12,fontWeight:700,color:stage.color,flex:1}}>{stage.name}</span>
+                  <span style={{fontSize:10,fontWeight:900,color:"#fff",background:stage.color,borderRadius:20,padding:"1px 7px",minWidth:18,textAlign:"center"}}>{cols.length}</span>
                 </div>
-                <span style={{fontSize:9,color:sc,background:sc+"18",padding:"2px 8px",borderRadius:20,fontWeight:700,whiteSpace:"nowrap"}}>{t.status}</span>
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {cols.length===0&&(
+                    <div style={{...card({padding:16}),textAlign:"center",color:C.faint,fontSize:11}}>Vazio</div>
+                  )}
+                  {cols.map(t=>{
+                    const pc=PRIORIDADE_COLOR[t.prioridade]||C.muted;
+                    return (
+                      <div key={t.id} onClick={()=>setSel(t)}
+                        style={{...card({padding:12}),cursor:"pointer",transition:"transform 0.1s,box-shadow 0.1s",borderLeft:"3px solid "+pc}}
+                        onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 8px 24px rgba(0,0,0,0.3)";}}
+                        onMouseLeave={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow="";}}>
+                        <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:4,lineHeight:1.3}}>{t.titulo}</div>
+                        <div style={{fontSize:10,color:C.muted,marginBottom:8}}>{t.lead_name||"—"}</div>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <span style={{fontSize:9,color:pc,background:pc+"18",padding:"2px 7px",borderRadius:20,fontWeight:700}}>{t.prioridade}</span>
+                          <select value={t.status} onChange={e=>{e.stopPropagation();updateStatus(t.id,e.target.value);}}
+                            onClick={e=>e.stopPropagation()}
+                            style={{fontSize:9,background:C.bg,border:"1px solid "+C.border,borderRadius:6,color:C.muted,padding:"2px 4px",cursor:"pointer"}}>
+                            {SUPORTE_STAGES.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             );
           })}
         </div>
-      }
+      )}
+
+      {/* ── LISTA ── */}
+      {tab==="lista"&&(
+        <div>
+          <div style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:4}}>
+            {FILTROS.map(f=>(
+              <button key={f.id} onClick={()=>setFiltro(f.id)}
+                style={{padding:"6px 14px",borderRadius:20,border:"1px solid "+(filtro===f.id?C.accent:C.border),background:filtro===f.id?(C.accent+"18"):"transparent",color:filtro===f.id?C.accent:C.muted,fontSize:11,fontWeight:filtro===f.id?700:400,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+                {f.label} <span style={{fontWeight:900}}>{f.count}</span>
+              </button>
+            ))}
+          </div>
+          {filtrados.length===0
+            ?<div style={{...card({padding:40}),textAlign:"center",color:C.muted}}>
+              <div style={{fontSize:32,marginBottom:12}}>🎉</div>
+              <div>{tickets.length===0?"Nenhum ticket criado ainda.":"Nenhum ticket nesse filtro."}</div>
+            </div>
+            :<div style={card({padding:0,overflow:"hidden"})}>
+              {filtrados.map((t,i)=>{
+                const sc = STATUS_COLOR[t.status]||C.muted;
+                const pc = PRIORIDADE_COLOR[t.prioridade]||C.muted;
+                return (
+                  <div key={t.id} onClick={()=>setSel(t)}
+                    style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<filtrados.length-1?"1px solid "+C.border:"none",cursor:"pointer"}}
+                    onMouseEnter={e=>e.currentTarget.style.background=C.accent+"08"}
+                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <div style={{width:4,height:40,borderRadius:2,background:pc,flexShrink:0}}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:700,color:C.text}}>{t.titulo}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{t.lead_name} · {t.user_name} · {t.createdAt?.substring(0,10)}</div>
+                    </div>
+                    <span style={{fontSize:9,color:sc,background:sc+"18",padding:"2px 8px",borderRadius:20,fontWeight:700,whiteSpace:"nowrap"}}>{t.status}</span>
+                  </div>
+                );
+              })}
+            </div>
+          }
+        </div>
+      )}
 
       {/* Modal novo ticket */}
       {showNew&&(
@@ -5883,21 +6372,19 @@ function Suporte({ leads, onUpdateLead, currentUser }) {
   );
 }
 
-
 // ─── MÓDULO PÓS-VENDA ────────────────────────────────────────────────────────
 // v28: migrado para usar tabela `leads` com module='pos_venda' + lead_stages
 const PV_STAGES = [
-  {id:"aguardando",   name:"Aguardando",     color:"#6B7280"},
-  {id:"enviado",      name:"Enviado",        color:"#3B82F6"},
-  {id:"respondeu",    name:"Respondeu",      color:"#8B5CF6"},
-  {id:"em_conversa",  name:"Em conversa",    color:"#F59E0B"},
-  {id:"agendou",      name:"Agendou reunião",color:"#10B981"},
-  {id:"finalizado",   name:"Finalizado",     color:"#4ADE80"},
-  {id:"sem_resposta", name:"Sem resposta",   color:"#F87171"},
+  {id:"aguardando",   name:"Aguardando",     color:"#6B7280", icon:"⏳"},
+  {id:"enviado",      name:"Enviado",        color:"#3B82F6", icon:"📤"},
+  {id:"em_conversa",  name:"Em conversa",    color:"#F59E0B", icon:"💬"},
+  {id:"agendou",      name:"Agendou reunião",color:"#10B981", icon:"📅"},
+  {id:"finalizado",   name:"Finalizado",     color:"#4ADE80", icon:"✅"},
+  {id:"sem_resposta", name:"Sem resposta",   color:"#F87171", icon:"🔕"},
 ];
 
 function PosVenda({ currentUser }) {
-  const [tab, setTab]           = useState("clientes"); // clientes | agenda | funil
+  const [tab, setTab]           = useState("kanban"); // kanban | lista | funil
   const [clientes, setClientes] = useState([]);
   const [leadStages, setLeadStages] = useState([]); // lead_stages do módulo pos_venda
   const [loading,  setLoading]  = useState(true);
@@ -6037,7 +6524,7 @@ function PosVenda({ currentUser }) {
 
   const total      = clientes.length;
   const enviados   = clientes.filter(c=>getStage(c).id!=="aguardando").length;
-  const responderam= clientes.filter(c=>["respondeu","em_conversa","agendou","finalizado"].includes(getStage(c).id)).length;
+  const responderam= clientes.filter(c=>["em_conversa","agendou","finalizado"].includes(getStage(c).id)).length;
   const aguardando = clientes.filter(c=>getStage(c).id==="aguardando").length;
   const txResposta = enviados>0?Math.round((responderam/enviados)*100):0;
 
@@ -6068,9 +6555,17 @@ function PosVenda({ currentUser }) {
 
       {error&&<div style={{marginBottom:16,padding:"10px 14px",background:"rgba(248,113,113,0.1)",border:"1px solid #F87171",borderRadius:8,fontSize:12,color:"#F87171"}}>{error}<button onClick={()=>setError("")} style={{marginLeft:8,background:"transparent",border:"none",color:"#F87171",cursor:"pointer"}}>✕</button></div>}
 
+      {/* KPIs */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}} className="mob-grid-2">
+        <div style={card({padding:14})}><div style={{fontSize:22,fontWeight:900,color:C.accent}}>{total}</div><div style={{fontSize:11,color:C.muted}}>Total clientes</div></div>
+        <div style={card({padding:14})}><div style={{fontSize:22,fontWeight:900,color:"#3B82F6"}}>{enviados}</div><div style={{fontSize:11,color:C.muted}}>Acionados</div></div>
+        <div style={card({padding:14})}><div style={{fontSize:22,fontWeight:900,color:"#8B5CF6"}}>{responderam}</div><div style={{fontSize:11,color:C.muted}}>Responderam</div></div>
+        <div style={card({padding:14})}><div style={{fontSize:22,fontWeight:900,color:"#4ADE80"}}>{txResposta+"%"}</div><div style={{fontSize:11,color:C.muted}}>Taxa resposta</div></div>
+      </div>
+
       {/* Tabs */}
       <div style={{display:"flex",gap:0,marginBottom:20,border:"1px solid "+C.border,borderRadius:10,overflow:"hidden"}}>
-        {[["clientes","📋 Clientes"],["funil","🔀 Funil"],].map(([v,l])=>(
+        {[["kanban","📋 Kanban"],["lista","📄 Lista"],["funil","🔀 Funil"],].map(([v,l])=>(
           <button key={v} onClick={()=>setTab(v)}
             style={{flex:1,padding:"10px",border:"none",background:tab===v?C.accent:"transparent",color:tab===v?"#fff":C.muted,fontWeight:tab===v?700:400,fontSize:12,cursor:"pointer",transition:"all 0.15s"}}>
             {l}
@@ -6078,30 +6573,68 @@ function PosVenda({ currentUser }) {
         ))}
       </div>
 
-      {/* ── ABA CLIENTES ── */}
-      {tab==="clientes"&&(
-        <div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}} className="mob-grid-2">
-            <div style={card({padding:14})}><div style={{fontSize:22,fontWeight:900,color:C.accent}}>{total}</div><div style={{fontSize:11,color:C.muted}}>Total clientes</div></div>
-            <div style={card({padding:14})}><div style={{fontSize:22,fontWeight:900,color:"#3B82F6"}}>{enviados}</div><div style={{fontSize:11,color:C.muted}}>Acionados</div></div>
-            <div style={card({padding:14})}><div style={{fontSize:22,fontWeight:900,color:"#8B5CF6"}}>{responderam}</div><div style={{fontSize:11,color:C.muted}}>Responderam</div></div>
-            <div style={card({padding:14})}><div style={{fontSize:22,fontWeight:900,color:"#4ADE80"}}>{txResposta+"%"}</div><div style={{fontSize:11,color:C.muted}}>Taxa resposta</div></div>
+      {/* ── ABA KANBAN ── */}
+      {tab==="kanban"&&(
+        loading
+          ?<div style={{textAlign:"center",padding:40,color:C.muted}}>⟳ Carregando...</div>
+          :<div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8}}>
+            {PV_STAGES.map(stage=>{
+              const stageLeads = clientes.filter(c=>getStage(c).id===stage.id);
+              return (
+                <div key={stage.id} style={{minWidth:220,flex:"0 0 220px"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,padding:"8px 12px",background:stage.color+"18",borderRadius:8,border:"1px solid "+stage.color+"33"}}>
+                    <span>{stage.icon}</span>
+                    <span style={{fontSize:12,fontWeight:700,color:stage.color}}>{stage.name}</span>
+                    <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:stage.color,background:stage.color+"22",padding:"1px 8px",borderRadius:20}}>{stageLeads.length}</span>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {stageLeads.map(c=>(
+                      <div key={c.id} onClick={()=>setSel(c)}
+                        style={{...card({padding:12}),border:"1px solid "+C.border,cursor:"pointer",transition:"all 0.15s"}}
+                        onMouseEnter={e=>e.currentTarget.style.borderColor=stage.color}
+                        onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+                        <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:4}}>{c.name}</div>
+                        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+                          <span style={{fontSize:9,color:"#fff",background:c.channel==="whatsapp"?"#25D366":c.channel==="email"?"#3B82F6":"#6B7280",padding:"1px 7px",borderRadius:20,fontWeight:700}}>{c.channel||"—"}</span>
+                          {c.assigned_to&&<span style={{fontSize:9,color:C.faint}}>👤 {c.assigned_to}</span>}
+                        </div>
+                        {c.notes&&<div style={{fontSize:10,color:C.dim,fontStyle:"italic"}}>{c.notes.substring(0,50)}{c.notes.length>50?"...":""}</div>}
+                        <div style={{marginTop:8}}>
+                          <select value={getStage(c).id} onClick={e=>e.stopPropagation()}
+                            onChange={e=>updateStatus(c,e.target.value)}
+                            style={{...inp,fontSize:10,padding:"3px 6px",width:"100%"}}>
+                            {PV_STAGES.map(s=>(
+                              <option key={s.id} value={s.id}>{s.icon} {s.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    ))}
+                    {stageLeads.length===0&&(
+                      <div style={{padding:"16px 8px",textAlign:"center",color:C.faint,fontSize:11,border:"1px dashed "+C.border,borderRadius:8}}>Vazio</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
+      )}
 
+      {/* ── ABA LISTA ── */}
+      {tab==="lista"&&(
+        <div>
           {/* Filtros rápidos */}
-          <div style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:4}}>
-            {FILTROS.slice(0,6).map(fi=>(
+          <div style={{display:"flex",gap:6,marginBottom:12,overflowX:"auto",paddingBottom:4}}>
+            {FILTROS.map(fi=>(
               <button key={fi.id} onClick={()=>setFiltro(fi.id)}
                 style={{padding:"6px 14px",borderRadius:20,border:"1px solid "+(filtro===fi.id?C.accent:C.border),background:filtro===fi.id?(C.accent+"18"):"transparent",color:filtro===fi.id?C.accent:C.muted,fontSize:11,fontWeight:filtro===fi.id?700:400,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
                 {fi.label} <span style={{fontWeight:900}}>{fi.count}</span>
               </button>
             ))}
           </div>
-
-          <div style={{marginBottom:16}}>
+          <div style={{marginBottom:12}}>
             <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="Buscar por nome, empresa ou telefone..." style={{...inp,width:"100%"}}/>
           </div>
-
           {loading
             ?<div style={{textAlign:"center",padding:40,color:C.muted}}>⟳ Carregando...</div>
             :filtered.length===0
@@ -6118,8 +6651,8 @@ function PosVenda({ currentUser }) {
                       style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<filtered.length-1?"1px solid "+C.border:"none",cursor:"pointer"}}
                       onMouseEnter={e=>e.currentTarget.style.background=C.accent+"08"}
                       onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                      <div style={{width:36,height:36,borderRadius:"50%",background:stage.color+"18",border:"1px solid "+stage.color+"33",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>
-                        {c.company?"🏢":"👤"}
+                      <div style={{width:36,height:36,borderRadius:"50%",background:stage.color+"18",border:"1px solid "+stage.color+"33",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
+                        {stage.icon}
                       </div>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{fontSize:13,fontWeight:700,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</div>
@@ -6141,6 +6674,7 @@ function PosVenda({ currentUser }) {
             {funilCols.map(({stage,leads:cols})=>(
               <div key={stage.id} style={{flex:"0 0 200px",minWidth:180}}>
                 <div style={{padding:"8px 12px",borderRadius:8,background:stage.color+"18",border:"1px solid "+stage.color+"33",marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontSize:14}}>{stage.icon}</span>
                   <span style={{fontSize:12,fontWeight:700,color:stage.color}}>{stage.name}</span>
                   <span style={{fontSize:11,fontWeight:900,color:stage.color,background:stage.color+"30",borderRadius:20,padding:"1px 8px"}}>{cols.length}</span>
                 </div>
@@ -6971,6 +7505,35 @@ export default function App() {
       notify("✅ "+lead.name+" adicionado (offline)");
     }
   };
+  // Adiciona lead direto ao módulo Prospecção (chamado pelo SearchLeads)
+  const addToProsp = async (data) => {
+    const tenantId = user?.tenant_id || "072b33d2-46ff-4bf2-839b-ee5d33fe6cb7";
+    const payload = {
+      id: crypto.randomUUID(),
+      name: data.name||data.company||"",
+      company: data.company||"",
+      phone: data.phone||"",
+      email: data.email||"",
+      channel: data.channel||"whatsapp",
+      notes: data.notes||"",
+      city: data.city||"",
+      score: data.score||null,
+      status: PROSP_STAGES[0].name,
+      module: "prospeccao",
+      tenant_id: tenantId,
+      created_at: new Date().toISOString(),
+    };
+    try {
+      const saved = await sbFetch("leads","POST",payload);
+      const newLead = Array.isArray(saved)&&saved[0] ? saved[0] : payload;
+      await sbFetch("lead_stages","POST",{
+        id:crypto.randomUUID(), lead_id:newLead.id, stage_id:PROSP_STAGES[0].id,
+        entered_at:new Date().toISOString(), tenant_id:tenantId, actions_done:[]
+      });
+      notify("🎯 "+newLead.name+" adicionado à Prospecção!");
+    } catch(e) { notify("Erro ao adicionar à Prospecção","warn"); }
+  };
+
   const updateLead=(lead)=>{
     setLeads(ls=>ls.map(l=>l.id===lead.id?lead:l));
     sbUpdateLead(lead.id,leadToDb(lead)).catch(()=>{});
@@ -6999,6 +7562,7 @@ export default function App() {
     {id:"funil",    label:"Funil de Vendas",   icon:"filter",    group:"Gestão", badge:leads.filter(l=>getPendingActions(l).length>0).length},
     {id:"metas",    label:"Metas",              icon:"target",    group:"Gestão"},
     {id:"cadencia",  label:"Cadências",           icon:"calendar",  group:"Gestão"},
+    {id:"prospeccao",  label:"Prospecção",          icon:"target",    group:"Módulos"},
     {id:"receptivo", label:"Receptivo",          icon:"inbox",     group:"Módulos"},
     {id:"pos_venda",   label:"Pos-venda",           icon:"handshake", group:"Módulos"},
     {id:"reativacao",  label:"Reativação",          icon:"refresh",   group:"Módulos"},
@@ -7013,7 +7577,7 @@ export default function App() {
   const renderPage = (pg) => {
     if(pg==="dashboard") return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} users={DB.all()} currentUser={user} isMaster={isMaster}/>;
     if(pg==="profile") return <CompanyProfile profile={profile} onSave={p=>{setProfile(p);notify("Perfil salvo!");}} />;
-    if(pg==="search") return <SearchLeads onLeadsFound={addLead} existingLeads={leads} profile={profile} currentUser={user} ownerWebhook={ownerWebhooks.busca_leads||ownerWebhook}/>;
+    if(pg==="search") return <SearchLeads onLeadsFound={addLead} onAddToProsp={addToProsp} existingLeads={leads} profile={profile} currentUser={user} ownerWebhook={ownerWebhooks.busca_leads||ownerWebhook}/>;
     if(pg==="addlead") return <AddLead onLeadsFound={addLead} existingLeads={leads} profile={profile}/>;
     if(pg==="messages") return <Messages leads={leads} profile={profile}/>;
     if(pg==="whatsapp") return <WhatsappSender leads={leads} profile={profile} webhook={ownerWebhook}/>;
@@ -7021,6 +7585,7 @@ export default function App() {
     if(pg==="funil") return <FunnelPage leads={leads} onUpdateLead={updateLead} currentUser={user} isMaster={isMaster}/>;
     if(pg==="metas") return <GoalsDashboard leads={leads} users={DB.all()||[]} currentUser={user}/>;
     if(pg==="cadencia") return <Cadencias leads={leads} currentUser={user} onUpdateLead={updateLead}/>;
+    if(pg==="prospeccao") return <Prospeccao currentUser={user}/>;
     if(pg==="receptivo") return <Receptivo leads={leads} onAddLead={addLead} onUpdateLead={updateLead} currentUser={user}/>;
     if(pg==="pos_venda")  return <PosVenda currentUser={user}/>;
     if(pg==="reativacao") return <Reativacao leads={leads} onUpdateLead={updateLead} onSetPage={setPage}/>;
