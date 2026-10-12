@@ -1600,24 +1600,44 @@ function CentralDecisao({ leads, onSetPage, onAcionar }) {
 
 function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isMaster=false}) {
   const [modTab, setModTab] = useState("todos"); // todos | prospeccao | receptivo | pos_venda
+  const [posVendaData, setPosVendaData] = useState([]);
+
+  // Carrega dados de pós-venda do Supabase quando seleciona a aba
+  const tenantId = currentUser?.tenant_id;
+  useEffect(()=>{
+    if(modTab!=="pos_venda"&&modTab!=="todos") return;
+    if(!tenantId) return;
+    sbFetch("pos_venda?select=*&tenant_id=eq."+tenantId+"&order=created_at.desc")
+      .then(rows=>setPosVendaData(Array.isArray(rows)?rows:[]))
+      .catch(()=>{});
+  },[modTab, tenantId]);
 
   // Filter leads by module tab
   // Filtros por módulo
   const proLeads  = leads.filter(l=>!l.module||l.module==="prospeccao");
   const recLeads  = leads.filter(l=>l.module==="receptivo");
-  const posLeads  = leads.filter(l=>l.module==="pos_venda");
+  const posLeads  = posVendaData; // usa dados reais da tabela pos_venda
 
   const filteredLeads = modTab==="todos"      ? leads
     : modTab==="prospeccao"                   ? proLeads
     : modTab==="receptivo"                    ? recLeads
-    : modTab==="pos_venda"                    ? posLeads
+    : modTab==="pos_venda"                    ? [] // pos_venda usa posLeads separado
     : leads;
 
   const fl = filteredLeads;
-  const total=fl.length;
-  const conv=fl.filter(l=>l.status==="Contratou"||l.status==="Fechado").length;
-  const neg=fl.filter(l=>["Montar orçamento","Proposta enviada","Proposta","Negociando"].includes(l.status)).length;
-  const novos=fl.filter(l=>["Novo cliente","Novo contato"].includes(l.status)).length;
+  const isPosVenda = modTab==="pos_venda";
+
+  // KPIs — pós-venda usa status_envio, outros usam status
+  const total = isPosVenda ? posLeads.length : fl.length;
+  const conv  = isPosVenda
+    ? posLeads.filter(c=>["Finalizado","Agendou reunião"].includes(c.status_envio)).length
+    : fl.filter(l=>l.status==="Contratou"||l.status==="Fechado").length;
+  const neg   = isPosVenda
+    ? posLeads.filter(c=>["Em conversa","Respondeu"].includes(c.status_envio)).length
+    : fl.filter(l=>["Montar orçamento","Proposta enviada","Proposta","Negociando"].includes(l.status)).length;
+  const novos = isPosVenda
+    ? posLeads.filter(c=>c.status_envio==="Aguardando").length
+    : fl.filter(l=>["Novo cliente","Novo contato"].includes(l.status)).length;
   const taxa=total?Math.round((conv/total)*100):0;
 
   // Funil adaptado por módulo
@@ -1633,7 +1653,7 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
   const stageIdx=(name)=>STAGE_ORDER.indexOf(name);
   const reachedStage=(name)=>fl.filter(l=>stageIdx(l.status)>=stageIdx(name)).length;
   const FUNIL_VISIBLE = modTab==="pos_venda"
-    ? POS_VENDA_STAGES.map(s=>({label:s.label,v:fl.filter(l=>l.status===s.label).length,c:s.c}))
+    ? POS_VENDA_STAGES.map(s=>({label:s.label,v:posLeads.filter(c=>(c.status_envio||"Aguardando")===s.label).length,c:s.c}))
     : [
         {label:"Aguardando",v:fl.filter(l=>l.status==="Aguardando").length,c:"#6B7280"},
         {label:"Novo cliente",v:reachedStage("Novo cliente"),c:"#3B82F6"},
@@ -1644,6 +1664,8 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
         {label:"Contratou",v:reachedStage("Contratou"),c:"#4ADE80"},
       ];
   const maxF=Math.max(...FUNIL_VISIBLE.map(f=>f.v),1);
+  // Total para % no funil: usar posLeads.length para pós-venda
+  const totalForFunil = isPosVenda ? posLeads.length : total;
 
   const todayLeads=filterLeadsByPeriod(fl,"dia");
   const weekLeads=filterLeadsByPeriod(fl,"semana");
@@ -1683,10 +1705,10 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
       {/* KPIs */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:14,marginBottom:22}}>
         <KpiCard value={total} label="Total"/>
-        <KpiCard value={novos} label="Novos" accent="#60A5FA"/>
-        <KpiCard value={neg} label="Em Negociação" accent="#FBBF24"/>
+        <KpiCard value={novos} label={isPosVenda?"Aguardando":"Novos"} accent="#60A5FA"/>
+        <KpiCard value={neg} label={isPosVenda?"Em Conversa":"Em Negociação"} accent="#FBBF24"/>
         <KpiCard value={taxa+"%"} label="Conversão" accent="#4ADE80"/>
-        <KpiCard value={fl.filter(l=>l.priority==="Alta").length} label="Alta Prior." accent="#F87171" pos={false}/>
+        <KpiCard value={isPosVenda?posLeads.filter(c=>c.status_envio==="Enviado").length:fl.filter(l=>l.priority==="Alta").length} label={isPosVenda?"Enviados":"Alta Prior."} accent={isPosVenda?"#3B82F6":"#F87171"} pos={false}/>
       </div>
 
       {/* Visão total — resumo de módulos */}
@@ -1695,9 +1717,11 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
           {[
             {label:"🎯 Prospecção", leads:proLeads, color:"#3B82F6", page:"crm"},
             {label:"📥 Receptivo",  leads:recLeads, color:"#8B5CF6", page:"receptivo"},
-            {label:"🤝 Pós-venda",  leads:posLeads, color:"#4ADE80", page:"pos_venda"},
+            {label:"🤝 Pós-venda",  leads:posLeads, color:"#4ADE80", page:"pos_venda", isPV:true},
           ].map(mod=>{
-            const fechados = mod.leads.filter(l=>["Contratou","Fechado"].includes(l.status)).length;
+            const fechados = mod.isPV
+              ? mod.leads.filter(l=>["Finalizado","Agendou reunião"].includes(l.status_envio)).length
+              : mod.leads.filter(l=>["Contratou","Fechado"].includes(l.status)).length;
             const taxa2 = mod.leads.length?Math.round((fechados/mod.leads.length)*100):0;
             return (
               <div key={mod.label} onClick={()=>onSetPage(mod.page)}
@@ -1769,7 +1793,7 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
                     {convRate!==null&&<span style={{fontSize:9,color:C.faint,background:C.border,padding:"1px 5px",borderRadius:10}}>{convRate}% do ant.</span>}
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{fontSize:11,color:C.faint}}>{total?Math.round((f.v/total)*100):0}%</span>
+                    <span style={{fontSize:11,color:C.faint}}>{totalForFunil?Math.round((f.v/totalForFunil)*100):0}%</span>
                     <span style={{fontSize:14,fontWeight:800,color:f.c}}>{f.v}</span>
                   </div>
                 </div>
@@ -1785,12 +1809,19 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
         <div style={card()}>
           <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>Status Resumo</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {getStatusList().map(s=>{
-              const sc=getStatusColor(s)||C.dim;
-              const n=fl.filter(l=>l.status===s).length;
-              if(n===0) return null;
-              return <div key={s} style={{flex:1,minWidth:60,background:(sc+"10"),border:"1px solid "+(sc+"33"),borderRadius:8,padding:"8px 10px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:900,color:sc}}>{n}</div><div style={{fontSize:9,color:C.faint,fontWeight:600,marginTop:2}}>{s}</div></div>;
-            })}
+            {isPosVenda
+              ? POS_VENDA_STAGES.map(s=>{
+                  const n=posLeads.filter(c=>(c.status_envio||"Aguardando")===s.label).length;
+                  if(n===0) return null;
+                  return <div key={s.label} style={{flex:1,minWidth:60,background:(s.c+"10"),border:"1px solid "+(s.c+"33"),borderRadius:8,padding:"8px 10px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:900,color:s.c}}>{n}</div><div style={{fontSize:9,color:C.faint,fontWeight:600,marginTop:2}}>{s.label}</div></div>;
+                })
+              : getStatusList().map(s=>{
+                  const sc=getStatusColor(s)||C.dim;
+                  const n=fl.filter(l=>l.status===s).length;
+                  if(n===0) return null;
+                  return <div key={s} style={{flex:1,minWidth:60,background:(sc+"10"),border:"1px solid "+(sc+"33"),borderRadius:8,padding:"8px 10px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:900,color:sc}}>{n}</div><div style={{fontSize:9,color:C.faint,fontWeight:600,marginTop:2}}>{s}</div></div>;
+                })
+            }
           </div>
         </div>
       </div>
