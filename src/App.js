@@ -6405,8 +6405,36 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
   const loadClientes = async () => {
     setLoading(true);
     try {
+      // Tabela principal: clientes já na pos_venda
       const rows = await sbFetch("pos_venda?select=*&tenant_id=eq."+tenantId+"&order=data_cadastro.desc");
-      setClientes(Array.isArray(rows)?rows:[]);
+      // Agenda: todos os status (pendente, erro, processado)
+      const agenda = await sbFetch("pos_venda_agenda?select=*&tenant_id=eq."+tenantId+"&order=data_agendamento.asc");
+
+      // Mapeamento:
+      //   pendente   → "Aguardando"  (ainda não chegou a hora)
+      //   erro       → "Erro"        (função falhou ao processar)
+      //   processado → "Agendado"    (processado pela função, já em pos_venda)
+      const normaliza = (a) => {
+        const fmt = (dt) => dt
+          ? new Date(dt).toLocaleDateString("pt-BR")+" "+new Date(dt).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})
+          : null;
+        const statusMap = {pendente:"Aguardando", erro:"Erro", processado:"Agendado"};
+        return {
+          ...a,
+          _source: "agenda_"+a.status,           // agenda_pendente | agenda_erro | agenda_processado
+          celular: a.telefone,
+          whatsapp: a.telefone,
+          nome_formatado: a.nome
+            ? a.nome.split(" ")[0].charAt(0).toUpperCase()+a.nome.split(" ")[0].slice(1).toLowerCase()
+            : a.nome,
+          data_cadastro: a.data_agendamento,
+          data_cadastro_fmt: fmt(a.data_agendamento),
+          status_envio: statusMap[a.status] || a.status,
+        };
+      };
+
+      const agendaRows = (Array.isArray(agenda)?agenda:[]).map(normaliza);
+      setClientes([...agendaRows, ...(Array.isArray(rows)?rows:[])]);
       setLeadStages([]);
       setError("");
     } catch(e) {
@@ -6416,12 +6444,22 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
 
   useEffect(()=>{ loadClientes(); },[]);
 
-  // ── Atualizar status na tabela pos_venda ─────────────────────────────────────
+  // ── Atualizar status na tabela pos_venda (apenas clientes já processados) ────
   const updateStatus = async (lead, novoStatus) => {
+    if(lead._source) return; // agenda_pendente e agenda_erro não têm status editável aqui
     try {
       await sbFetch("pos_venda?id=eq."+lead.id+"&tenant_id=eq."+tenantId, "PATCH", {status_envio: novoStatus});
       setClientes(cs=>cs.map(c=>c.id===lead.id?{...c,status_envio:novoStatus}:c));
       if(sel?.id===lead.id) setSel(s=>({...s,status_envio:novoStatus}));
+    } catch(e) { setError(e.message); }
+  };
+
+  // ── Retentar processamento de registro com erro na agenda ─────────────────
+  const retentarAgenda = async (item) => {
+    try {
+      await sbFetch("pos_venda_agenda?id=eq."+item.id+"&tenant_id=eq."+tenantId, "PATCH", {status:"pendente"});
+      notify("🔄 Reagendado — será processado no próximo ciclo.");
+      loadClientes();
     } catch(e) { setError(e.message); }
   };
 
@@ -6476,23 +6514,36 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
     return matchFiltro && matchBusca;
   });
 
-  const total      = clientes.length;
-  const enviados   = clientes.filter(c=>(c.status_envio||"Aguardando")!=="Aguardando").length;
-  const responderam= clientes.filter(c=>["Respondeu","Finalizado"].includes(c.status_envio||"")).length;
-  const aguardando = clientes.filter(c=>(c.status_envio||"Aguardando")==="Aguardando").length;
-  const txResposta = enviados>0?Math.round((responderam/enviados)*100):0;
+  const agendados   = clientes.filter(c=>c._source==="agenda_pendente").length;
+  const comErro     = clientes.filter(c=>c._source==="agenda_erro").length;
+  const processados = clientes.filter(c=>!c._source);
+  const total       = clientes.length;
+  const enviados    = processados.filter(c=>(c.status_envio||"Aguardando")!=="Aguardando").length;
+  const responderam = processados.filter(c=>["Respondeu"].includes(c.status_envio||"")).length;
+  const txResposta  = enviados>0?Math.round((responderam/enviados)*100):0;
 
-  const PV_STATUS = ["Aguardando","Enviado","Respondeu","Finalizado","Sem resposta"];
+  // Todos os status possíveis — agenda + pos_venda
+  const PV_STATUS = ["Aguardando","Erro","Agendado","Enviado","Respondeu","Agendou reunião","Sem resposta"];
+  const PV_STATUS_EDITAVEIS = ["Enviado","Respondeu","Agendou reunião","Sem resposta"]; // só pos_venda
   const FILTROS = [
     {id:"todos", label:"Todos", count:total},
     ...PV_STATUS.map(s=>({id:s,label:s,count:clientes.filter(c=>(c.status_envio||"Aguardando")===s).length})),
   ];
 
-  // ── Funil kanban — agrupa por status_envio ───────────────────────────────────
-  const funilCols = PV_STATUS.map(status=>({
-    stage: {id:status,name:status,color:status==="Aguardando"?"#6B7280":status==="Enviado"?"#3B82F6":status==="Respondeu"?"#F59E0B":status==="Finalizado"?"#4ADE80":"#F87171",icon:status==="Aguardando"?"⏳":status==="Enviado"?"📤":status==="Respondeu"?"💬":status==="Finalizado"?"✅":"🔕"},
-    leads: clientes.filter(c=>(c.status_envio||"Aguardando")===status),
-  }));
+  // Metadados visuais de cada status
+  const pvMeta = (st) => ({
+    color: st==="Aguardando"?"#6B7280":st==="Erro"?"#EF4444":st==="Agendado"?"#8B5CF6":st==="Enviado"?"#3B82F6":st==="Respondeu"?"#F59E0B":st==="Agendou reunião"?"#10B981":"#F87171",
+    icon:  st==="Aguardando"?"⏳":st==="Erro"?"⚠️":st==="Agendado"?"🕐":st==="Enviado"?"📤":st==="Respondeu"?"💬":st==="Agendou reunião"?"📅":"🔕",
+  });
+
+  // ── Funil kanban — agrupa por status_envio (inclui Agendado e Erro da agenda) ─
+  const funilCols = PV_STATUS.map(status=>{
+    const meta = pvMeta(status);
+    return {
+      stage: {id:status, name:status, ...meta},
+      leads: clientes.filter(c=>(c.status_envio||"Aguardando")===status),
+    };
+  });
 
   return (
     <div>
@@ -6511,10 +6562,11 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
       {error&&<div style={{marginBottom:16,padding:"10px 14px",background:"rgba(248,113,113,0.1)",border:"1px solid #F87171",borderRadius:8,fontSize:12,color:"#F87171"}}>{error}<button onClick={()=>setError("")} style={{marginLeft:8,background:"transparent",border:"none",color:"#F87171",cursor:"pointer"}}>✕</button></div>}
 
       {/* KPIs */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}} className="mob-grid-2">
-        <div style={card({padding:14})}><div style={{fontSize:22,fontWeight:900,color:C.accent}}>{total}</div><div style={{fontSize:11,color:C.muted}}>Total clientes</div></div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12,marginBottom:20}} className="mob-grid-2">
+        <div style={card({padding:14})}><div style={{fontSize:22,fontWeight:900,color:C.accent}}>{total}</div><div style={{fontSize:11,color:C.muted}}>Total</div></div>
+        <div style={card({padding:14})}><div style={{fontSize:22,fontWeight:900,color:"#8B5CF6"}}>{agendados}</div><div style={{fontSize:11,color:C.muted}}>🕐 Agendados</div></div>
+        {comErro>0&&<div style={card({padding:14,border:"1px solid #EF444444"})}><div style={{fontSize:22,fontWeight:900,color:"#EF4444"}}>{comErro}</div><div style={{fontSize:11,color:C.muted}}>⚠️ Com erro</div></div>}
         <div style={card({padding:14})}><div style={{fontSize:22,fontWeight:900,color:"#3B82F6"}}>{enviados}</div><div style={{fontSize:11,color:C.muted}}>Acionados</div></div>
-        <div style={card({padding:14})}><div style={{fontSize:22,fontWeight:900,color:"#8B5CF6"}}>{responderam}</div><div style={{fontSize:11,color:C.muted}}>Responderam</div></div>
         <div style={card({padding:14})}><div style={{fontSize:22,fontWeight:900,color:"#4ADE80"}}>{txResposta+"%"}</div><div style={{fontSize:11,color:C.muted}}>Taxa resposta</div></div>
       </div>
 
@@ -6553,15 +6605,26 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
                       </div>
                       <div style={{fontSize:10,color:C.muted}}>{c.celular||c.whatsapp||"—"}</div>
                       {c.data_cadastro_fmt&&<div style={{fontSize:10,color:C.faint,marginTop:2}}>📅 {c.data_cadastro_fmt}</div>}
-                      <div style={{marginTop:8}}>
-                        <select value={c.status_envio||"Aguardando"} onClick={e=>e.stopPropagation()}
-                          onChange={e=>updateStatus(c,e.target.value)}
-                          style={{...inp,fontSize:10,padding:"3px 6px",width:"100%"}}>
-                          {PV_STATUS.map(s=>(
-                            <option key={s} value={s}>{s}</option>
-                          ))}
-                        </select>
-                      </div>
+                      {c._source==="agenda_erro"&&(
+                        <button onClick={e=>{e.stopPropagation();retentarAgenda(c);}}
+                          style={{marginTop:8,width:"100%",padding:"4px",fontSize:10,fontWeight:700,background:"#EF444420",border:"1px solid #EF444460",borderRadius:6,color:"#EF4444",cursor:"pointer"}}>
+                          🔄 Retentar processamento
+                        </button>
+                      )}
+                      {c._source==="agenda_pendente"&&(
+                        <div style={{marginTop:6,fontSize:9,color:"#8B5CF6",fontWeight:600,textAlign:"center"}}>🕐 Aguarda data de acionamento</div>
+                      )}
+                      {!c._source&&(
+                        <div style={{marginTop:8}}>
+                          <select value={c.status_envio||"Aguardando"} onClick={e=>e.stopPropagation()}
+                            onChange={e=>updateStatus(c,e.target.value)}
+                            style={{...inp,fontSize:10,padding:"3px 6px",width:"100%"}}>
+                            {PV_STATUS_EDITAVEIS.map(s=>(
+                              <option key={s} value={s}>{s}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                     </div>
                   ))}
                   {stageLeads.length===0&&(
@@ -6599,21 +6662,57 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
               :<div style={card({padding:0,overflow:"hidden"})}>
                 {filtered.map((c,i)=>{
                   const st = c.status_envio||"Aguardando";
-                  const stColor = st==="Aguardando"?"#6B7280":st==="Enviado"?"#3B82F6":st==="Respondeu"?"#F59E0B":st==="Finalizado"?"#4ADE80":"#F87171";
-                  const stIcon  = st==="Aguardando"?"⏳":st==="Enviado"?"📤":st==="Respondeu"?"💬":st==="Finalizado"?"✅":"🔕";
+                  const stColor = st==="Aguardando"?"#6B7280":st==="Erro"?"#EF4444":st==="Agendado"?"#8B5CF6":st==="Enviado"?"#3B82F6":st==="Respondeu"?"#F59E0B":st==="Agendou reunião"?"#10B981":"#F87171";
+                  const stIcon  = st==="Aguardando"?"⏳":st==="Erro"?"⚠️":st==="Agendado"?"🕐":st==="Enviado"?"📤":st==="Respondeu"?"💬":st==="Agendou reunião"?"📅":"🔕";
+                  // Formata data_cadastro (timestamptz) → data e hora legíveis
+                  const dtCad = c.data_cadastro ? new Date(c.data_cadastro) : null;
+                  const dtCadStr = dtCad
+                    ? dtCad.toLocaleDateString("pt-BR")+" "+dtCad.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})
+                    : c.data_cadastro_fmt||null;
                   return (
-                    <div key={c.id} onClick={()=>setSel(c)}
-                      style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<filtered.length-1?"1px solid "+C.border:"none",cursor:"pointer"}}
-                      onMouseEnter={e=>e.currentTarget.style.background=C.accent+"08"}
-                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                      <div style={{width:36,height:36,borderRadius:"50%",background:stColor+"18",border:"1px solid "+stColor+"33",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
+                    <div key={c.id}
+                      style={{display:"flex",alignItems:"stretch",gap:0,borderBottom:i<filtered.length-1?"1px solid "+C.border:"none"}}>
+                      {/* Ícone status */}
+                      <div style={{width:48,display:"flex",alignItems:"center",justifyContent:"center",background:stColor+"0d",borderRight:"1px solid "+C.border,flexShrink:0,fontSize:18,cursor:"pointer"}}
+                        onClick={()=>setSel(c)}>
                         {stIcon}
                       </div>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:13,fontWeight:700,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.nome_formatado||c.nome}</div>
-                        <div style={{fontSize:11,color:C.muted}}>{c.celular||c.whatsapp||"—"}{c.vendedor?" · 👤 "+c.vendedor:""}{c.cpf_cnpj?" · "+c.cpf_cnpj:""}</div>
+                      {/* Dados principais */}
+                      <div style={{flex:1,minWidth:0,padding:"10px 14px",cursor:"pointer"}} onClick={()=>setSel(c)}>
+                        <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:3}}>{c.nome_formatado||c.nome}</div>
+                        <div style={{display:"flex",flexWrap:"wrap",gap:"4px 12px"}}>
+                          <span style={{fontSize:11,color:C.muted}}>📱 {c.celular||c.whatsapp||"—"}</span>
+                          {c.vendedor&&<span style={{fontSize:11,color:C.muted}}>👤 {c.vendedor}</span>}
+                          {c.cpf_cnpj&&<span style={{fontSize:11,color:C.faint}}>🪪 {c.cpf_cnpj}</span>}
+                        </div>
+                        {dtCadStr&&(
+                          <div style={{fontSize:10,color:C.faint,marginTop:4}}>
+                            <span style={{
+                              background: c._source==="agenda_erro"?"#EF444418":c._source==="agenda_pendente"?"#8B5CF618":(C.accent+"18"),
+                              color: c._source==="agenda_erro"?"#EF4444":c._source==="agenda_pendente"?"#8B5CF6":C.accent,
+                              padding:"1px 7px",borderRadius:20,fontWeight:600
+                            }}>
+                              {c._source==="agenda_pendente"?"🕐 Agendar em: ":c._source==="agenda_erro"?"⚠️ Tentativa em: ":"📅 Acionamento: "}{dtCadStr}
+                            </span>
+                          </div>
+                        )}
                       </div>
-                      <span style={{fontSize:9,color:stColor,background:stColor+"18",padding:"2px 8px",borderRadius:20,fontWeight:700,whiteSpace:"nowrap"}}>{st}</span>
+                      {/* Ação direita — retentar se erro, select se processado */}
+                      <div style={{display:"flex",alignItems:"center",padding:"0 12px",flexShrink:0}}>
+                        {c._source==="agenda_erro"
+                          ? <button onClick={e=>{e.stopPropagation();retentarAgenda(c);}}
+                              style={{fontSize:10,padding:"5px 10px",fontWeight:700,background:"#EF444420",border:"1px solid #EF444460",borderRadius:8,color:"#EF4444",cursor:"pointer",whiteSpace:"nowrap"}}>
+                              🔄 Retentar
+                            </button>
+                          : c._source==="agenda_pendente"
+                            ? <span style={{fontSize:10,color:"#8B5CF6",fontWeight:600,whiteSpace:"nowrap"}}>🕐 Pendente</span>
+                            : <select value={st} onClick={e=>e.stopPropagation()}
+                                onChange={e=>updateStatus(c,e.target.value)}
+                                style={{fontSize:10,padding:"4px 6px",borderRadius:8,border:"1px solid "+stColor+"55",background:stColor+"12",color:stColor,fontWeight:700,cursor:"pointer",outline:"none"}}>
+                                {PV_STATUS_EDITAVEIS.map(s=><option key={s} value={s}>{s}</option>)}
+                              </select>
+                        }
+                      </div>
                     </div>
                   );
                 })}
@@ -6626,7 +6725,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
       {/* Modal detalhe cliente */}
       {sel&&(()=>{
         const selStatus = sel.status_envio||"Aguardando";
-        const selColor  = selStatus==="Aguardando"?"#6B7280":selStatus==="Enviado"?"#3B82F6":selStatus==="Respondeu"?"#F59E0B":selStatus==="Finalizado"?"#4ADE80":"#F87171";
+        const selColor  = selStatus==="Aguardando"?"#6B7280":selStatus==="Erro"?"#EF4444":selStatus==="Agendado"?"#8B5CF6":selStatus==="Enviado"?"#3B82F6":selStatus==="Respondeu"?"#F59E0B":selStatus==="Agendou reunião"?"#10B981":"#F87171";
         return (
           <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(6,14,28,0.85)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
             onClick={()=>setSel(null)}>
@@ -6657,12 +6756,12 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
               <div style={{padding:"14px 24px",borderBottom:"1px solid "+C.border}}>
                 <div style={{fontSize:11,color:C.faint,fontWeight:700,marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>Status do acionamento</div>
                 <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                  {PV_STATUS.map(st=>{
+                  {(sel._source ? PV_STATUS : PV_STATUS_EDITAVEIS).map(st=>{
                     const active=selStatus===st;
-                    const stColor2=st==="Aguardando"?"#6B7280":st==="Enviado"?"#3B82F6":st==="Respondeu"?"#F59E0B":st==="Finalizado"?"#4ADE80":"#F87171";
+                    const stColor2=st==="Aguardando"?"#6B7280":st==="Erro"?"#EF4444":st==="Agendado"?"#8B5CF6":st==="Enviado"?"#3B82F6":st==="Respondeu"?"#F59E0B":st==="Agendou reunião"?"#10B981":"#F87171";
                     return (
                       <div key={st} onClick={()=>updateStatus(sel,st)}
-                        style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,cursor:"pointer",border:"1px solid "+(active?stColor2:C.border),background:active?(stColor2+"12"):"transparent",transition:"all 0.15s"}}>
+                        style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,cursor:sel._source?"default":"pointer",border:"1px solid "+(active?stColor2:C.border),background:active?(stColor2+"12"):"transparent",transition:"all 0.15s",opacity:sel._source?0.6:1}}>
                         <div style={{width:8,height:8,borderRadius:"50%",background:active?stColor2:C.border,flexShrink:0}}/>
                         <span style={{fontSize:12,fontWeight:active?700:400,color:active?stColor2:C.muted}}>{st}</span>
                         {active&&<span style={{marginLeft:"auto",fontSize:10,color:stColor2,fontWeight:700}}>✓ Atual</span>}
