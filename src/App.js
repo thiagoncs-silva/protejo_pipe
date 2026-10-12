@@ -6393,7 +6393,8 @@ function PosVenda({ currentUser }) {
   const [filtro,   setFiltro]   = useState("todos");
   const [busca,    setBusca]    = useState("");
   const [showForm, setShowForm] = useState(false); // modal novo cliente
-  const [showAgForm, setShowAgForm] = useState(false); // modal agendar acionamento
+  const [showAgForm, setShowAgForm] = useState(null); // lead selecionado para agendar
+  const [agForm, setAgForm]         = useState({data:"", hora:"", tipo:"whatsapp", obs:""});
   const [saving,   setSaving]   = useState(false);
   const [form, setForm] = useState({
     name:"", company:"", phone:"", email:"", document:"",
@@ -6466,20 +6467,24 @@ function PosVenda({ currentUser }) {
     try {
       const lista = lote.length>0 ? lote : [form];
       for(const item of lista){
-        const newLead = await sbFetch("leads","POST",{
+        // Compõe notes consolidando campos extras que não existem na tabela leads
+      const notesExtra = [
+        item.document ? "CPF/CNPJ: "+item.document : "",
+        item.assigned_to ? "Responsável: "+item.assigned_to : "",
+        item.notes||"",
+      ].filter(Boolean).join(" | ");
+
+      const newLead = await sbFetch("leads","POST",{
           id: crypto.randomUUID(),
           name: item.name,
           company: item.company||null,
           phone: item.phone,
           email: item.email||null,
-          document: item.document||null,
           channel: item.channel||"whatsapp",
-          assigned_to: item.assigned_to||null,
-          notes: item.notes||null,
+          notes: notesExtra||null,
           status: "Aguardando",
           module: "pos_venda",
           tenant_id: tenantId,
-          user_id: currentUser?.id||null,
           created_at: new Date().toISOString(),
         });
         // Registra estágio inicial
@@ -6780,11 +6785,66 @@ function PosVenda({ currentUser }) {
                   }} style={{...btnP,flex:1,padding:"9px",fontSize:12,background:"linear-gradient(135deg,#25D366,#128C7E)"}}>📱 WhatsApp</button>
                 )}
                 {sel.email&&<button onClick={()=>window.open("mailto:"+sel.email,"_blank")} style={{...btnP,flex:1,padding:"9px",fontSize:12,background:"linear-gradient(135deg,#3B82F6,#1D4ED8)"}}>✉️ Email</button>}
+                <button onClick={()=>{setSel(null);setShowAgForm(sel);}} style={{...btnG,flex:1,padding:"9px",fontSize:12}}>📅 Agendar</button>
               </div>
             </div>
           </div>
         );
       })()}
+
+      {/* Modal: Agendar acionamento */}
+      {showAgForm&&(
+        <div style={{position:"fixed",inset:0,zIndex:600,background:"rgba(6,14,28,0.88)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+          onClick={()=>setShowAgForm(null)}>
+          <div style={{background:C.panel,border:"1px solid "+C.border,borderRadius:16,padding:24,width:"100%",maxWidth:400,boxShadow:"0 24px 64px rgba(0,0,0,0.6)"}}
+            onClick={e=>e.stopPropagation()}>
+            <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:4}}>📅 Agendar acionamento</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:20}}>{showAgForm.name}</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+              <div>
+                <div style={lbl}>Data *</div>
+                <input type="date" value={agForm.data} onChange={e=>setAgForm(a=>({...a,data:e.target.value}))} style={inp}/>
+              </div>
+              <div>
+                <div style={lbl}>Horário *</div>
+                <input type="time" value={agForm.hora} onChange={e=>setAgForm(a=>({...a,hora:e.target.value}))} style={inp}/>
+              </div>
+            </div>
+            <div style={{marginBottom:12}}>
+              <div style={lbl}>Canal do contato</div>
+              <select value={agForm.tipo} onChange={e=>setAgForm(a=>({...a,tipo:e.target.value}))} style={inp}>
+                <option value="whatsapp">WhatsApp</option>
+                <option value="ligacao">Ligação</option>
+                <option value="email">Email</option>
+                <option value="reuniao">Reunião</option>
+                <option value="visita">Visita</option>
+              </select>
+            </div>
+            <div style={{marginBottom:20}}>
+              <div style={lbl}>Observação</div>
+              <textarea value={agForm.obs} onChange={e=>setAgForm(a=>({...a,obs:e.target.value}))} rows={2} placeholder="Pauta, objetivo..." style={{...inp,resize:"vertical"}}/>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>setShowAgForm(null)} style={{...btnG,flex:1,padding:"10px"}}>Cancelar</button>
+              <button
+                disabled={!agForm.data||!agForm.hora}
+                onClick={async()=>{
+                  const notaAg=`[Agendamento: ${agForm.data} ${agForm.hora} via ${agForm.tipo}${agForm.obs?" — "+agForm.obs:""}]`;
+                  const notaNova=(showAgForm.notes||"")+" "+notaAg;
+                  try{
+                    await sbFetch("leads?id=eq."+showAgForm.id+"&tenant_id=eq."+tenantId,"PATCH",{notes:notaNova.trim()});
+                    setClientes(cs=>cs.map(c=>c.id===showAgForm.id?{...c,notes:notaNova.trim()}:c));
+                  }catch(e){}
+                  setAgForm({data:"",hora:"",tipo:"whatsapp",obs:""});
+                  setShowAgForm(null);
+                }}
+                style={{...btnP,flex:2,padding:"10px",fontSize:13,fontWeight:700,opacity:(!agForm.data||!agForm.hora)?0.5:1}}>
+                💾 Salvar agendamento
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal: Novo Cliente */}
       {showForm&&(
