@@ -31,7 +31,14 @@ const applyTenantConfig = (tenant) => {
     segment:       cfg.segment        || TENANT_CONFIG.segment,
     city:          cfg.city           || TENANT_CONFIG.city,
     webhookUrl:    cfg.webhookUrl     || TENANT_CONFIG.webhookUrl,
-    modules:       Array.isArray(tenant.modules)?tenant.modules:(typeof tenant.modules==="string"?JSON.parse(tenant.modules||"[]"):TENANT_CONFIG.modules),
+    modules: (() => {
+      let m = tenant.modules;
+      if(Array.isArray(m) && m.length > 0) return m;
+      if(typeof m==="string" && m.trim().startsWith("[")) {
+        try { const p=JSON.parse(m); if(Array.isArray(p) && p.length > 0) return p; } catch(e){}
+      }
+      return TENANT_CONFIG.modules || ["prospeccao"];
+    })(),
   };
   // Apply colors dynamically
   if(cfg.primaryColor) {
@@ -371,7 +378,7 @@ const hasPermission = (user, tenantCfg, mod, action) => {
   const up = user.perms?.[mod];
   return Array.isArray(up)&&up.includes(action);
 };
-const DEFAULT_USER_PERMS = ["dashboard","profile","search","addlead","messages","whatsapp","crm","funil","metas","settings"];
+const DEFAULT_USER_PERMS = ["dashboard","profile","search","addlead","messages","whatsapp","crm","funil","metas","settings","prospeccao","receptivo","pos_venda","cadencia","reativacao","suporte"];
 const DEFAULT_MASTER_PERMS = [...ALL_MODULES]; // master sees everything including master panel
 
 
@@ -7567,29 +7574,57 @@ const PRODUCT_MODS_DEF = [
 ];
 
 function ModulosConfig({ tenant, onSave }) {
-  const cfg = typeof tenant?.config==="string" ? JSON.parse(tenant.config||"{}") : (tenant?.config||{});
-  // Módulos de produto ativos (coluna modules do tenant)
+  // Parseia modules de qualquer formato que o Supabase retorne
   const parseMods = (m) => {
     if(Array.isArray(m) && m.length > 0) return m;
-    if(typeof m==="string" && m.startsWith("[")) { try { const p=JSON.parse(m); if(p.length>0) return p; } catch(e){} }
-    return null; // null = desconhecido (não sobrescreve)
+    if(typeof m==="string" && m.trim().startsWith("[")) {
+      try { const p=JSON.parse(m); if(Array.isArray(p) && p.length > 0) return p; } catch(e){}
+    }
+    if(typeof m==="string" && m.length > 0 && !m.startsWith("[")) {
+      // pode ser lista separada por vírgula
+      const parts = m.split(",").map(s=>s.trim()).filter(Boolean);
+      if(parts.length > 0) return parts;
+    }
+    return null;
   };
+
+  const parseCfg = (c) => {
+    if(!c) return {};
+    if(typeof c==="string") { try { return JSON.parse(c); } catch(e) { return {}; } }
+    return c;
+  };
+
+  const cfg = parseCfg(tenant?.config);
   const originalMods = parseMods(tenant?.modules);
+
   const [activeMods, setActiveMods] = React.useState(originalMods || ["prospeccao"]);
-  const [modsChanged, setModsChanged] = React.useState(false); // só salva modules se o usuário mexeu
+  const [modsChanged, setModsChanged] = React.useState(false);
   const [perms, setPerms] = React.useState(cfg.permissions || {});
   const [quota, setQuota] = React.useState(cfg.quota || 100);
   const [expanded, setExpanded] = React.useState({});
   const [dirty, setDirty] = React.useState(false);
 
+  // Sincroniza quando tenant.modules muda (após salvar ou recarregar)
+  React.useEffect(() => {
+    const mods = parseMods(tenant?.modules);
+    if(mods) setActiveMods(mods);
+  }, [tenant?.modules]);
+
+  // Sincroniza config quando tenant.config muda
+  React.useEffect(() => {
+    const c = parseCfg(tenant?.config);
+    setPerms(c.permissions || {});
+    setQuota(c.quota || 100);
+  }, [tenant?.config]);
+
   const toggleProductMod = (modId) => {
     setActiveMods(prev => {
       const has = prev.includes(modId);
       const next = has ? prev.filter(m=>m!==modId) : [...prev, modId];
-      return next.length > 0 ? next : prev;
+      return next.length > 0 ? next : prev; // garante pelo menos 1
     });
     setDirty(true);
-    setModsChanged(true); // usuário tocou nos módulos
+    setModsChanged(true);
   };
 
   const toggleMod = (modId) => {
@@ -7609,8 +7644,8 @@ function ModulosConfig({ tenant, onSave }) {
 
   const save = () => {
     const newCfg = {...cfg, permissions: perms, quota};
-    // Só passa módulos se o usuário mexeu nos toggles — evita sobrescrever com valor padrão
-    const finalMods = modsChanged ? (activeMods.length > 0 ? activeMods : ["prospeccao"]) : null;
+    // Sempre passa activeMods — o useEffect garante que está sincronizado com o tenant real
+    const finalMods = activeMods.length > 0 ? activeMods : ["prospeccao"];
     onSave(newCfg, finalMods); setDirty(false); setModsChanged(false);
   };
 
@@ -7675,12 +7710,14 @@ function ModulosConfig({ tenant, onSave }) {
           </div>
         );
       })}
-      {dirty&&<button onClick={save} style={{marginTop:10,width:"100%",padding:"9px",background:"linear-gradient(135deg,"+C.accent+","+C.accent2+")",color:"#fff",border:"none",borderRadius:8,fontWeight:800,fontSize:13,cursor:"pointer"}}>💾 Salvar Permissões</button>}
+      <button onClick={save} style={{marginTop:10,width:"100%",padding:"9px",background:dirty?"linear-gradient(135deg,"+C.accent+","+C.accent2+")":"rgba(0,180,216,0.12)",color:dirty?"#fff":C.muted,border:"1px solid "+(dirty?C.accent:C.border),borderRadius:8,fontWeight:800,fontSize:13,cursor:"pointer",transition:"all 0.2s"}}>
+        {dirty?"💾 Salvar Módulos e Permissões":"✅ Salvo — clique para re-salvar"}
+      </button>
     </div>
   );
 }
 
-function SuperAdminPanel({ currentUser }) {
+function SuperAdminPanel({ currentUser, onViewAsTenant }) {
   const [tab, setTab]           = useState("tenants");
   const [tenants, setTenants]   = useState([]);
   const [loading, setLoading]   = useState(true);
@@ -7853,6 +7890,10 @@ function SuperAdminPanel({ currentUser }) {
                     </div>
                   </div>
                   <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                    <button onClick={()=>{ const mods = (() => { let m=t.modules; if(Array.isArray(m)&&m.length>0) return m; if(typeof m==="string"&&m.trim().startsWith("[")){ try{const p=JSON.parse(m);if(p.length>0)return p;}catch(e){} } return ["prospeccao"]; })(); onViewAsTenant&&onViewAsTenant({id:t.id,name:t.name,modules:mods}); }}
+                      style={{display:"inline-flex",alignItems:"center",gap:5,padding:"5px 12px",borderRadius:8,border:"1px solid rgba(251,191,36,0.4)",background:"rgba(251,191,36,0.08)",color:"#FBBF24",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                      👁 Visualizar
+                    </button>
                     {t.status==="active"
                       ?<button onClick={()=>updateTenantStatus(t.id,"suspended")}
                           style={{...btnG,padding:"5px 12px",fontSize:11,color:"#F59E0B",border:"1px solid rgba(245,158,11,0.3)"}}>⏸ Suspender</button>
@@ -7865,15 +7906,16 @@ function SuperAdminPanel({ currentUser }) {
                 {/* Permissions granular */}
                 <ModulosConfig tenant={t} onSave={async(newCfg, activeMods)=>{
                   try {
-                    const patch = {config: JSON.stringify(newCfg)};
-                    // Só atualiza modules se o usuário mexeu nos toggles de produto (activeMods != null)
-                    if(Array.isArray(activeMods)) patch.modules = JSON.stringify(activeMods);
+                    const patch = {
+                      config: JSON.stringify(newCfg),
+                      modules: JSON.stringify(activeMods),  // sempre salva os módulos
+                    };
                     await adm("tenants?id=eq."+t.id, "PATCH", patch);
-                    const newMods = Array.isArray(activeMods) ? activeMods : t.modules;
-                    setTenants(ts=>ts.map(x=>x.id===t.id?{...x,config:newCfg,modules:newMods}:x));
-                    setSaved(Array.isArray(activeMods)?"Permissões e módulos salvos!":"Permissões salvas!");
-                    setTimeout(()=>setSaved(""),2500);
-                  } catch(e){ setError(e.message); }
+                    // Atualiza state local com array (não string) para o useEffect do ModulosConfig detectar
+                    setTenants(ts=>ts.map(x=>x.id===t.id?{...x,config:newCfg,modules:activeMods}:x));
+                    setSaved("✅ Módulos e permissões salvos!");
+                    setTimeout(()=>setSaved(""),3000);
+                  } catch(e){ setError("Erro ao salvar: "+e.message); }
                 }}/>
 
                 {/* Users */}
@@ -7968,6 +8010,8 @@ export default function App() {
   const [ownerWebhooks,setOwnerWebhooks]=useState({busca_leads:"",pos_resposta:""});
   // Módulos ativos do tenant (React state para forçar re-render do nav quando mudarem)
   const [tenantModules, setTenantModules] = useState(TENANT_CONFIG.modules||["prospeccao"]);
+  // Owner: visualizar nav como uma empresa cliente (preview mode)
+  const [viewAsTenant, setViewAsTenant] = useState(null); // {id, name, modules[]}
 
   const [leads,setLeads]=useState([]);
   const [sbLoading,setSbLoading]=useState(true);
@@ -8072,8 +8116,6 @@ export default function App() {
     if(user.role==="owner") return true;
     // master acessa tudo exceto super_admin
     if(user.role==="master") return mod!=="super_admin";
-    // pos_venda só para owner e master
-    if(mod==="pos_venda") return false;
 
     // Usuário comum: lê permissões do objeto Supabase diretamente
     // user.perms pode ser array (coluna jsonb), string JSON, ou null/vazio
@@ -8197,11 +8239,17 @@ export default function App() {
   ];
   // Módulos contratados pelo tenant (React state — atualizado após login e boot)
   const tenantMods = Array.isArray(tenantModules) && tenantModules.length > 0 ? tenantModules : ["prospeccao"];
+  // Se owner está no modo "visualizar como empresa", usa os módulos daquela empresa
+  const previewMods = viewAsTenant ? (Array.isArray(viewAsTenant.modules) && viewAsTenant.modules.length > 0 ? viewAsTenant.modules : ["prospeccao"]) : null;
+  const effectiveMods = previewMods || tenantMods;
   // Itens do grupo Módulos: só aparecem se o tenant contratou E o usuário tem acesso
   const MOD_IDS = ["prospeccao","receptivo","pos_venda","reativacao","suporte","cadencia"];
   const nav = ALL_NAV.filter(n => {
     if(!hasAccess(n.id)) return false;
-    if(MOD_IDS.includes(n.id) && !isOwner && !tenantMods.includes(n.id)) return false;
+    // No modo preview, owner vê exatamente o que a empresa vê (sem bypass)
+    if(MOD_IDS.includes(n.id) && (!isOwner || viewAsTenant) && !effectiveMods.includes(n.id)) return false;
+    // No modo preview, esconde super_admin e master do nav (simula usuário comum)
+    if(viewAsTenant && (n.id==="super_admin" || n.id==="master")) return false;
     return true;
   });
   const presentGroups = [...new Set(nav.map(n=>n.group))];
@@ -8224,7 +8272,7 @@ export default function App() {
     if(pg==="suporte")    return <Suporte leads={leads} onUpdateLead={updateLead} currentUser={user}/>;
     if(pg==="settings") return <Settings user={user}/>;
     if(pg==="master") return <MasterPanel currentUser={user}/>;
-    if(pg==="super_admin") return <SuperAdminPanel currentUser={user}/>;
+    if(pg==="super_admin") return <SuperAdminPanel currentUser={user} onViewAsTenant={(t)=>{ setViewAsTenant(t); setPage("dashboard"); }}/>;
     return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} users={DB.all()||[]} currentUser={user} isMaster={isMaster}/>;
   };
 
@@ -8235,7 +8283,7 @@ export default function App() {
 
 
   return (
-    <div style={{display:"flex",height:"100vh",background:C.bg,fontFamily:"'Inter','Segoe UI',sans-serif",color:C.text,overflow:"hidden"}}>
+    <div style={{display:"flex",height:"100vh",background:C.bg,fontFamily:"'Inter','Segoe UI',sans-serif",color:C.text,overflow:"hidden",paddingTop:viewAsTenant?34:0}}>
       <style>{`*{box-sizing:border-box;margin:0;padding:0;} @keyframes spin{to{transform:rotate(360deg)}} @keyframes slideIn{from{transform:translateX(-100%)}to{transform:none}} @keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}} @keyframes fin{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}} ::-webkit-scrollbar{width:5px;height:5px} ::-webkit-scrollbar-track{background:${C.sidebar}} ::-webkit-scrollbar-thumb{background:#1E3A5F;border-radius:4px} input::placeholder,textarea::placeholder{color:${C.faint}} select option{background:${C.panel};color:${C.text}} @media(max-width:767px){.mob-hide{display:none!important;}.mob-grid-1{grid-template-columns:1fr!important;}.mob-scroll-x{overflow-x:auto!important;} table{min-width:560px;}}`}</style>
       {pwaPrompt&&!pwaInstalled&&(
         <div style={{position:"fixed",bottom:80,left:"50%",transform:"translateX(-50%)",zIndex:998,background:C.panel,border:"1px solid "+C.accent,borderRadius:12,padding:"12px 18px",display:"flex",alignItems:"center",gap:12,boxShadow:"0 8px 24px rgba(0,0,0,0.4)",maxWidth:"90vw"}}>
@@ -8251,6 +8299,20 @@ export default function App() {
       {sbLoading&&<div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:1000,background:C.panel,border:"1px solid "+C.accent,borderRadius:10,padding:"10px 20px",color:C.accent,fontSize:12,fontWeight:700,boxShadow:"0 4px 20px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}><span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>⟳</span> Carregando do Supabase...</div>}
       
       {notif&&<div style={{position:"fixed",top:16,right:16,zIndex:999,background:notif.type==="warn"?"#1A1A2E":C.panel,border:("1px solid "+notif.type==="warn"?"#FBBF2466":C.accent),borderRadius:10,padding:"10px 18px",color:C.text,fontSize:13,fontWeight:600,boxShadow:"0 4px 20px rgba(0,0,0,0.5)",animation:"fin 0.2s ease"}}>{notif.msg}</div>}
+
+      {/* Barra de preview — owner visualizando como empresa */}
+      {viewAsTenant&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,zIndex:990,background:"linear-gradient(90deg,#F59E0B,#D97706)",padding:"7px 16px",display:"flex",alignItems:"center",gap:12,boxShadow:"0 2px 12px rgba(245,158,11,0.4)"}}>
+          <span style={{fontSize:13}}>👁️</span>
+          <span style={{fontSize:12,fontWeight:700,color:"#000",flex:1}}>
+            Visualizando como: <strong>{viewAsTenant.name}</strong>
+            <span style={{fontWeight:400,marginLeft:8,opacity:0.7}}>— módulos: {(viewAsTenant.modules||[]).join(", ")||"nenhum"}</span>
+          </span>
+          <button onClick={()=>setViewAsTenant(null)} style={{background:"rgba(0,0,0,0.2)",border:"none",color:"#000",fontWeight:800,fontSize:11,padding:"4px 12px",borderRadius:20,cursor:"pointer"}}>
+            ✕ Sair do preview
+          </button>
+        </div>
+      )}
 
       {/* Mobile overlay menu */}
       {isMobile&&mobileMenu&&(
