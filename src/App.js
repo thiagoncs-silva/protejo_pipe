@@ -1617,6 +1617,101 @@ function CentralDecisao({ leads, onSetPage, onAcionar, leadStages=[] }) {
   );
 }
 
+// ─── Drill por Usuário — painel expansível no Dashboard ──────────────────────
+function DrillUsuarios({ srcLeads=[], users=[], isPosVenda=false, modTab="todos" }) {
+  const [drillUser, setDrillUser] = useState(null);
+
+  // Agrupa leads por responsável
+  const byUser = {};
+  srcLeads.forEach(l => {
+    const key = l.responsible || (isPosVenda ? (l.vendedor || "Sem responsável") : "Sem responsável");
+    if(!byUser[key]) byUser[key] = { name:key, total:0, statusMap:{} };
+    byUser[key].total++;
+    const stLabel = isPosVenda ? (l.status_envio||"Aguardando") : (l.status||"—");
+    byUser[key].statusMap[stLabel] = (byUser[key].statusMap[stLabel]||0) + 1;
+  });
+  // Adiciona usuários sem leads para aparecerem na lista
+  users.forEach(u => {
+    const k = u.name || u.email || "";
+    if(k && !byUser[k]) byUser[k] = { name:k, total:0, statusMap:{} };
+  });
+  const rows = Object.values(byUser).sort((a,b) => b.total - a.total);
+
+  // Paleta de cores por estágio
+  const stageColors = isPosVenda
+    ? PV_STAGES.reduce((acc,s) => { acc[s.name]=s.color; return acc; }, {})
+    : [...(modTab==="prospeccao"?PROSP_STAGES:modTab==="receptivo"?RECEPTIVO_STAGES:FUNIL_STAGES)]
+        .reduce((acc,s) => { acc[s.name]=s.color; return acc; }, {});
+
+  return (
+    <div style={card()}>
+      <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>
+        Por Usuário
+      </div>
+      {rows.length===0 && (
+        <div style={{fontSize:12,color:C.faint,textAlign:"center",padding:"16px 0"}}>Nenhum dado</div>
+      )}
+      {rows.map(row => {
+        const isOpen = drillUser === row.name;
+        const statusEntries = Object.entries(row.statusMap).sort((a,b) => b[1]-a[1]);
+        const maxS = Math.max(...statusEntries.map(e=>e[1]), 1);
+        const initials = (row.name||"?")[0].toUpperCase();
+        return (
+          <div key={row.name} style={{marginBottom:8,borderRadius:8,overflow:"hidden",border:"1px solid "+C.border}}>
+            {/* Linha principal */}
+            <div
+              onClick={() => setDrillUser(isOpen ? null : row.name)}
+              style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:isOpen?C.sidebar:"transparent",cursor:"pointer",transition:"background 0.15s"}}
+            >
+              <div style={{width:28,height:28,borderRadius:"50%",background:C.accent+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:C.accent,flexShrink:0}}>
+                {initials}
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12,fontWeight:700,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{row.name}</div>
+                <div style={{fontSize:10,color:C.faint}}>{row.total} lead{row.total!==1?"s":""}</div>
+              </div>
+              <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"nowrap"}}>
+                {statusEntries.slice(0,3).map(([st,n]) => {
+                  const c = stageColors[st] || C.dim;
+                  return (
+                    <div key={st} style={{fontSize:10,fontWeight:700,color:c,background:c+"18",border:"1px solid "+c+"33",borderRadius:6,padding:"1px 7px",whiteSpace:"nowrap"}}>
+                      {n}
+                    </div>
+                  );
+                })}
+                <div style={{color:C.faint,fontSize:10,marginLeft:2}}>{isOpen?"▲":"▼"}</div>
+              </div>
+            </div>
+            {/* Drill expandido */}
+            {isOpen && (
+              <div style={{padding:"10px 14px 12px",background:C.panel,borderTop:"1px solid "+C.border}}>
+                {statusEntries.length===0
+                  ? <div style={{fontSize:11,color:C.faint}}>Sem leads atribuídos</div>
+                  : statusEntries.map(([st,n]) => {
+                      const c = stageColors[st] || C.dim;
+                      const pct = Math.round((n/maxS)*100);
+                      return (
+                        <div key={st} style={{marginBottom:9}}>
+                          <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                            <span style={{fontSize:11,color:C.text,fontWeight:600}}>{st}</span>
+                            <span style={{fontSize:11,fontWeight:800,color:c}}>{n}</span>
+                          </div>
+                          <div style={{height:5,background:C.border,borderRadius:4,overflow:"hidden"}}>
+                            <div style={{height:"100%",width:pct+"%",background:c,borderRadius:4,transition:"width 0.4s"}}/>
+                          </div>
+                        </div>
+                      );
+                    })
+                }
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isMaster=false}) {
   const [modTab, setModTab] = useState("todos"); // todos | prospeccao | receptivo | pos_venda | reativacao | ativo
   const [posVendaData, setPosVendaData] = useState([]);
@@ -1871,25 +1966,13 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
           })}
         </div>
 
-        {/* Status resumo */}
-        <div style={card()}>
-          <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>Status Resumo</div>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {isPosVenda
-              ? PV_STAGES.map(s=>{
-                  const n=posLeads.filter(c=>getPvStageId(c)===s.id).length;
-                  if(n===0) return null;
-                  return <div key={s.id} style={{flex:1,minWidth:60,background:(s.color+"10"),border:"1px solid "+(s.color+"33"),borderRadius:8,padding:"8px 10px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:900,color:s.color}}>{n}</div><div style={{fontSize:9,color:C.faint,fontWeight:600,marginTop:2}}>{s.name}</div></div>;
-                })
-              : getStatusList().map(s=>{
-                  const sc=getStatusColor(s)||C.dim;
-                  const n=fl.filter(l=>l.status===s).length;
-                  if(n===0) return null;
-                  return <div key={s} style={{flex:1,minWidth:60,background:(sc+"10"),border:"1px solid "+(sc+"33"),borderRadius:8,padding:"8px 10px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:900,color:sc}}>{n}</div><div style={{fontSize:9,color:C.faint,fontWeight:600,marginTop:2}}>{s}</div></div>;
-                })
-            }
-          </div>
-        </div>
+        {/* Drill por Usuário */}
+        <DrillUsuarios
+          srcLeads={isPosVenda ? posLeads : fl}
+          users={users}
+          isPosVenda={isPosVenda}
+          modTab={modTab}
+        />
       </div>
 
       {/* Central de Decisão */}
@@ -5256,6 +5339,7 @@ function MasterPanel({ currentUser }) {
     setBusy(true);
     try {
       await sbAuth.createUser({
+        id: crypto.randomUUID(),
         name: form.name,
         email: form.email,
         password: form.password,
@@ -7465,26 +7549,8 @@ function SuperAdminPanel({ currentUser }) {
     name:"", slug:"", plan:"basic", modules:["prospeccao"]
   });
 
-  const SB_URL_ADM = "https://rbizynwybepmlljgcveq.supabase.co";
-  const SB_KEY_ADM = "sb_publishable_oqQ9VvnLTSZI4yYiu4UsyA_EV1a2nT4";
-
-  const adm = async (path, method="GET", body=null) => {
-    const opts = {
-      method,
-      headers: {
-        "apikey": SB_KEY_ADM,
-        "Authorization": "Bearer "+(typeof sbAuth!=="undefined"&&sbAuth.token?sbAuth.token():SB_KEY_ADM),
-        "Content-Type": "application/json",
-        "Prefer": method==="POST"?"return=representation":"return=minimal",
-      }
-    };
-    if(body) opts.body = JSON.stringify(body);
-    const res = await fetch(SB_URL_ADM+"/rest/v1/"+path, opts);
-    const text = await res.text();
-    const parsed = text ? JSON.parse(text) : null;
-    if(!res.ok) throw new Error((parsed?.message||parsed?.error||"Erro "+res.status));
-    return parsed;
-  };
+  // Usa o mesmo sbFetch padrão do app (chave e URL corretas)
+  const adm = (path, method="GET", body=null, extra={}) => sbFetch(path, method, body, extra);
 
   const MOCK_TENANTS = [
     {id:"072b33d2-46ff-4bf2-839b-ee5d33fe6cb7",name:"TM Soluções Comerciais",status:"ativo",created_at:"2026-01-01T00:00:00",config:{quota:100,permissions:{}},users:[]},
@@ -7844,14 +7910,25 @@ export default function App() {
   // Permission check - owner always has access to everything
   const hasAccess = (mod) => {
     if(!user) return false;
-    // super_admin tab only for super_admin role
+    // super_admin só para role owner
     if(mod==="super_admin") return user.role==="owner";
+    // owner acessa tudo
     if(user.role==="owner") return true;
-    // pos_venda only for owner and master
-    if(mod==="pos_venda") return user.role==="owner"||user.role==="master";
-    const u = DB.findById(user.id);
-    const perms = u?.perms || (user.role==="master"?ALL_MODULES:DEFAULT_USER_PERMS);
-    return perms.includes(mod);
+    // master acessa tudo exceto super_admin
+    if(user.role==="master") return mod!=="super_admin";
+    // pos_venda só para owner e master
+    if(mod==="pos_venda") return false;
+
+    // Usuário comum: lê permissões do objeto Supabase diretamente
+    // user.perms pode ser array (coluna jsonb), ou string JSON
+    let perms = user.perms;
+    if(typeof perms==="string"){ try{ perms=JSON.parse(perms); }catch(e){ perms=null; } }
+    // Fallback: tenta USER_DB local (modo offline)
+    if(!Array.isArray(perms)){
+      const local = DB.findById(user.id);
+      perms = local?.perms || DEFAULT_USER_PERMS;
+    }
+    return Array.isArray(perms) ? perms.includes(mod) : DEFAULT_USER_PERMS.includes(mod);
   };
 
   // Responsive hooks - before any conditional return (React rules)
@@ -7873,6 +7950,15 @@ export default function App() {
       const saved=await sbInsertLead(leadToDb(withStage));
       const newLead=saved&&saved[0]?dbToLead(saved[0]):{...withStage,id:Date.now()};
       setLeadStage(newLead.id,firstStage?.id||"f1");
+      // Insere entrada em lead_stages para que o funil do Dashboard contabilize
+      try {
+        await sbFetch("lead_stages","POST",{
+          lead_id:   newLead.id,
+          stage_id:  firstStage?.id||"f1",
+          tenant_id: user?.tenant_id||null,
+          entered_at: new Date().toISOString(),
+        });
+      } catch(e2){ console.warn("lead_stages insert failed:", e2.message); }
       setLeads(ls=>[newLead,...ls]);
       notify("✅ "+newLead.name+" adicionado ao CRM e ao Funil");
     }catch(e){
@@ -7947,7 +8033,15 @@ export default function App() {
     ...(isMaster?[{id:"master",label:"Controle de Acesso",icon:"shield",group:"Gestão",master:true}]:[]),
     ...(isOwner?[{id:"super_admin",label:"Super Admin",icon:"settings",group:"Administração",owner:true}]:[]),
   ];
-  const nav = ALL_NAV.filter(n => hasAccess(n.id));
+  // Módulos contratados pelo tenant (vem do Supabase via applyTenantConfig)
+  const tenantMods = Array.isArray(TENANT_CONFIG.modules) ? TENANT_CONFIG.modules : ["prospeccao"];
+  // Itens do grupo Módulos: só aparecem se o tenant contratou E o usuário tem acesso
+  const MOD_IDS = ["prospeccao","receptivo","pos_venda","reativacao","suporte","cadencia"];
+  const nav = ALL_NAV.filter(n => {
+    if(!hasAccess(n.id)) return false;
+    if(MOD_IDS.includes(n.id) && !isOwner && !tenantMods.includes(n.id)) return false;
+    return true;
+  });
   const presentGroups = [...new Set(nav.map(n=>n.group))];
   const groups = ["Principal","Comunicação","Gestão","Módulos","Master","Owner","Administração"].filter(g=>presentGroups.includes(g));
   const renderPage = (pg) => {
