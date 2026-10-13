@@ -7461,12 +7461,35 @@ function WebhooksConfig({ tenants, onSaved }) {
   );
 }
 
+const PRODUCT_MODS_DEF = [
+  {id:"prospeccao", label:"🎯 Prospecção",  desc:"Captação e funil de novos leads"},
+  {id:"receptivo",  label:"📥 Receptivo",   desc:"Leads que chegam via formulário/canal"},
+  {id:"pos_venda",  label:"🤝 Pós-venda",   desc:"Gestão de clientes ativos"},
+  {id:"cadencia",   label:"📅 Cadências",   desc:"Automação de follow-up por etapas"},
+  {id:"reativacao", label:"🔄 Reativação",  desc:"Leads frios e oportunidades perdidas"},
+  {id:"suporte",    label:"🎧 Suporte",     desc:"Gestão de tickets de atendimento"},
+];
+
 function ModulosConfig({ tenant, onSave }) {
-  const cfg = tenant?.config || {};
+  const cfg = typeof tenant?.config==="string" ? JSON.parse(tenant.config||"{}") : (tenant?.config||{});
+  // Módulos de produto ativos (coluna modules do tenant)
+  const tenantMods = Array.isArray(tenant?.modules) ? tenant.modules
+    : (typeof tenant?.modules==="string" ? JSON.parse(tenant?.modules||"[]") : ["prospeccao"]);
+  const [activeMods, setActiveMods] = React.useState(tenantMods);
   const [perms, setPerms] = React.useState(cfg.permissions || {});
   const [quota, setQuota] = React.useState(cfg.quota || 100);
   const [expanded, setExpanded] = React.useState({});
   const [dirty, setDirty] = React.useState(false);
+
+  const toggleProductMod = (modId) => {
+    setActiveMods(prev => {
+      const has = prev.includes(modId);
+      const next = has ? prev.filter(m=>m!==modId) : [...prev, modId];
+      // Garante mínimo de 1 módulo
+      return next.length > 0 ? next : prev;
+    });
+    setDirty(true);
+  };
 
   const toggleMod = (modId) => {
     const enabled = !!perms[modId];
@@ -7485,12 +7508,30 @@ function ModulosConfig({ tenant, onSave }) {
 
   const save = () => {
     const newCfg = {...cfg, permissions: perms, quota};
-    onSave(newCfg); setDirty(false);
+    const finalMods = activeMods.length > 0 ? activeMods : ["prospeccao"];
+    onSave(newCfg, finalMods); setDirty(false);
   };
 
   return (
     <div style={{marginTop:12}}>
-      <div style={{fontSize:10,color:C.faint,fontWeight:700,marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>Permissões e Módulos</div>
+      <div style={{fontSize:10,color:C.faint,fontWeight:700,marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>Módulos Contratados</div>
+      {/* Toggles de produto */}
+      <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
+        {PRODUCT_MODS_DEF.map(m=>{
+          const on = activeMods.includes(m.id);
+          return (
+            <div key={m.id} onClick={()=>toggleProductMod(m.id)}
+              title={m.desc}
+              style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:8,cursor:"pointer",border:"1px solid "+(on?C.accent:C.border),background:on?(C.accent+"15"):"transparent",transition:"all 0.15s"}}>
+              <div style={{width:28,height:16,borderRadius:8,background:on?C.accent:C.border,position:"relative",flexShrink:0,transition:"background 0.2s"}}>
+                <div style={{position:"absolute",top:2,left:on?12:2,width:12,height:12,borderRadius:6,background:"#fff",transition:"left 0.2s"}}/>
+              </div>
+              <span style={{fontSize:12,fontWeight:on?700:400,color:on?C.text:C.muted}}>{m.label}</span>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{fontSize:10,color:C.faint,fontWeight:700,marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>Permissões Granulares</div>
       {/* Quota */}
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,padding:"8px 12px",background:"rgba(0,180,216,0.06)",borderRadius:8,border:"1px solid rgba(0,180,216,0.15)"}}>
         <span style={{fontSize:12,color:C.muted,fontWeight:600}}>🔍 Cota mensal de buscas:</span>
@@ -7592,8 +7633,9 @@ function SuperAdminPanel({ currentUser }) {
     if(!form.name){ setError("Nome da empresa é obrigatório."); return; }
     setBusy(true); setError("");
     const slug = form.slug || form.name.toLowerCase().replace(/\s+/g,"-").replace(/[^a-z0-9-]/g,"");
+    const tempId = crypto.randomUUID();
     const newTenant = {
-      id: "local_"+Date.now(),
+      id: tempId,
       name: form.name,
       slug,
       plan: form.plan,
@@ -7605,6 +7647,7 @@ function SuperAdminPanel({ currentUser }) {
     };
     try {
       const data = await sbAuth.createTenant({
+        id: tempId,
         name: form.name,
         slug,
         plan: form.plan,
@@ -7718,11 +7761,13 @@ function SuperAdminPanel({ currentUser }) {
                 </div>
 
                 {/* Permissions granular */}
-                <ModulosConfig tenant={t} onSave={async(newCfg)=>{
+                <ModulosConfig tenant={t} onSave={async(newCfg, activeMods)=>{
                   try {
-                    await adm("tenants?id=eq."+t.id, "PATCH", {config:newCfg});
-                    setTenants(ts=>ts.map(x=>x.id===t.id?{...x,config:newCfg}:x));
-                    setSaved("Permissões salvas!");setTimeout(()=>setSaved(""),2500);
+                    const patch = {config: JSON.stringify(newCfg)};
+                    if(Array.isArray(activeMods)) patch.modules = JSON.stringify(activeMods);
+                    await adm("tenants?id=eq."+t.id, "PATCH", patch);
+                    setTenants(ts=>ts.map(x=>x.id===t.id?{...x,config:newCfg,modules:activeMods||x.modules}:x));
+                    setSaved("Permissões e módulos salvos!");setTimeout(()=>setSaved(""),2500);
                   } catch(e){ setError(e.message); }
                 }}/>
 
@@ -7816,6 +7861,8 @@ export default function App() {
   const [profile,setProfile]=useState(DEFAULT_PROFILE);
   const [ownerWebhook,setOwnerWebhook]=useState("https://seu-n8n.app.n8n.cloud/webhook/pipe-tm");
   const [ownerWebhooks,setOwnerWebhooks]=useState({busca_leads:"",pos_resposta:""});
+  // Módulos ativos do tenant (React state para forçar re-render do nav quando mudarem)
+  const [tenantModules, setTenantModules] = useState(TENANT_CONFIG.modules||["prospeccao"]);
 
   const [leads,setLeads]=useState([]);
   const [sbLoading,setSbLoading]=useState(true);
@@ -7845,9 +7892,13 @@ export default function App() {
       try {
         if(user?.tenant_id){
           try {
-            const t=await sbFetch("tenants?id=eq."+user.tenant_id+"&select=config");
-            if(t&&t[0]?.config){
-              const cfg=typeof t[0].config==="string"?JSON.parse(t[0].config):t[0].config;
+            const t=await sbFetch("tenants?id=eq."+user.tenant_id+"&select=*");
+            if(t&&t[0]){
+              // Aplica TODA config do tenant (cores, módulos, webhooks, etc.)
+              applyTenantConfig(t[0]);
+              // Atualiza state React para re-render do nav
+              if(TENANT_CONFIG.modules) setTenantModules([...TENANT_CONFIG.modules]);
+              const cfg=typeof t[0].config==="string"?JSON.parse(t[0].config||"{}"):t[0].config||{};
               if(cfg.webhooks) setOwnerWebhooks(w=>({...w,...cfg.webhooks}));
             }
           } catch(e){ console.warn(e); }
@@ -8006,7 +8057,13 @@ export default function App() {
     notify("Lead removido","warn");
   };
 
-  if(!user) return <AuthScreen onLogin={u=>{setUser(u);notify(`Bem-vindo(a), ${u.name.split(" ")[0]}! 👋`);setPage("dashboard");}}/>;
+  if(!user) return <AuthScreen onLogin={u=>{
+    setUser(u);
+    // Sincroniza módulos do tenant no state React (applyTenantConfig já foi chamado no login)
+    if(TENANT_CONFIG.modules) setTenantModules([...TENANT_CONFIG.modules]);
+    notify(`Bem-vindo(a), ${u.name.split(" ")[0]}! 👋`);
+    setPage("dashboard");
+  }}/>;
 
   const profileComplete=!!profile.companyName;
   const isOwner  = user?.role==="owner";
@@ -8033,8 +8090,8 @@ export default function App() {
     ...(isMaster?[{id:"master",label:"Controle de Acesso",icon:"shield",group:"Gestão",master:true}]:[]),
     ...(isOwner?[{id:"super_admin",label:"Super Admin",icon:"settings",group:"Administração",owner:true}]:[]),
   ];
-  // Módulos contratados pelo tenant (vem do Supabase via applyTenantConfig)
-  const tenantMods = Array.isArray(TENANT_CONFIG.modules) ? TENANT_CONFIG.modules : ["prospeccao"];
+  // Módulos contratados pelo tenant (React state — atualizado após login e boot)
+  const tenantMods = Array.isArray(tenantModules) && tenantModules.length > 0 ? tenantModules : ["prospeccao"];
   // Itens do grupo Módulos: só aparecem se o tenant contratou E o usuário tem acesso
   const MOD_IDS = ["prospeccao","receptivo","pos_venda","reativacao","suporte","cadencia"];
   const nav = ALL_NAV.filter(n => {
