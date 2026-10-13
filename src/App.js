@@ -1,4 +1,4 @@
-/* eslint-disable */  
+/* eslint-disable */
 import React, { useState, useEffect, useRef } from "react";
 
 // ─── SUPABASE CONFIG ──────────────────────────────────────────────────────────
@@ -102,7 +102,7 @@ const dbToLead = (r) => ({
   origem: r.origem||"",
   score: r.score||0,
   status: r.status||"Novo cliente",
-  funilStage: r.funil_stage||"s1",
+  funilStage: r.funil_stage||"f1",
   priority: r.priority||"Média",
   notes: r.notes||"",
   channel: r.channel||"Direto",
@@ -135,7 +135,7 @@ const leadToDb = (l) => ({
   origem: l.origem||"",
   score: l.score||0,
   status: l.status||"Novo cliente",
-  funil_stage: l.funilStage||"s1",
+  funil_stage: l.funilStage||"f1",
   priority: l.priority||"Média",
   notes: l.notes||"",
   channel: l.channel||"Direto",
@@ -194,7 +194,7 @@ const ACION_RES   = ["Sem resposta","Respondeu - interesse","Respondeu - sem int
 
 // ── WhatsApp Templates ───────────────────────────────────────────────────────
 const FUNIL_STAGES_MSGS = [
-  "Novo cliente","Conversando","Relacionamento","Reunião agendada","Proposta enviada","Contratou"
+  "Novo contato","Enviado","Em conversa","Agendou reunião","Proposta","Fechado","Perdido"
 ];
 
 // ─── TEMPLATES POR ETAPA DO FUNIL ────────────────────────────────────────────
@@ -385,52 +385,46 @@ const ACTION_TYPES = [
   {id:"outro",    label:"Outro",     icon:"⚡",  color:"#6B7280"},
 ];
 
+// ── Funil unificado — cobre Prospecção + Receptivo + Pós-venda ───────────────
+// Mapeamento de stages dos módulos → step do funil:
+//   f1 Novo contato  ← Prosp: Novo, 1º Contato | Recep: Novo contato, Qualificando | PV: Aguardando
+//   f2 Enviado       ← PV: Enviado
+//   f3 Em conversa   ← Prosp: Em conversa | Recep: Em conversa | PV: Respondeu
+//   f4 Agendou       ← Prosp: Agendou reunião | Recep: Agendou reunião | PV: Agendou reunião
+//   f5 Proposta      ← Prosp: Proposta | Recep: Proposta, Negociando
+//   f6 Fechado       ← Prosp: Fechado | Recep: Fechado
+//   f7 Perdido       ← Prosp: Perdido | Recep: Perdido | PV: Sem resposta
 const DEFAULT_STAGES = [
-  { id:"s0", name:"Aguardando",       color:"#6B7280", maxDays:30, order:0,
-    actions:[]},
-  { id:"s1", name:"Novo cliente",     color:"#3B82F6", maxDays:7,  order:1,
-    actions:[
-      {id:"a1",day:1,type:"whatsapp",label:"1º Contato",    msg:"Olá {nome}! Sou da OPEN Log, especializada em logística para o setor médico-hospitalar. Posso apresentar como podemos otimizar sua cadeia de suprimentos OPME?"},
-      {id:"a2",day:3,type:"whatsapp",label:"Follow-up",     msg:"Olá {nome}, tudo bem? Gostaria de saber se teve a oportunidade de pensar na nossa conversa. Temos cases incríveis na área hospitalar que podem te interessar!"},
-      {id:"a3",day:6,type:"ligacao", label:"Tentativa liga",msg:"Ligar para {nome} - apresentar soluções OPEN Log"},
-    ]},
-  { id:"s2", name:"Conversando",      color:"#8B5CF6", maxDays:14, order:1,
-    actions:[
-      {id:"a4",day:1,type:"whatsapp",label:"Engajamento",   msg:"Olá {nome}! Preparei um material sobre como reduzimos em 40% o tempo de entrega de OPME em hospitais similares ao seu. Posso enviar?"},
-      {id:"a5",day:4,type:"whatsapp",label:"Proposta valor",msg:"Oi {nome}! Nossa solução resolve diretamente a ruptura de estoque no centro cirúrgico. Quando podemos conversar melhor sobre isso?"},
-      {id:"a6",day:8,type:"email",   label:"E-mail detalhado",msg:"Segue material completo sobre nossas soluções logísticas para OPME..."},
-      {id:"a7",day:12,type:"ligacao",label:"Ligar",         msg:"Ligar para {nome} - agendar reunião de apresentação"},
-    ]},
-  { id:"s3", name:"Relacionamento",   color:"#10B981", maxDays:21, order:2,
-    actions:[
-      {id:"a8",day:3,type:"whatsapp",label:"Nutrição",      msg:"Olá {nome}! Compartilhando um case de sucesso do nosso cliente {empresa_similar} - resultado em 60 dias de parceria."},
-      {id:"a9",day:10,type:"email",  label:"Newsletter",    msg:"Conteúdo exclusivo do setor OPME para {nome}..."},
-    ]},
-  { id:"s4", name:"Reunião agendada", color:"#F59E0B", maxDays:3,  order:3,
-    actions:[
-      {id:"a10",day:0,type:"whatsapp",label:"Confirmação",  msg:"Olá {nome}! Confirmando nossa reunião amanhã. Estou animado para apresentar como a OPEN Log pode transformar sua logística OPME!"},
-      {id:"a11",day:1,type:"whatsapp",label:"Lembrete",     msg:"Oi {nome}! Só lembrando da nossa reunião hoje. Qualquer dúvida estou à disposição!"},
-    ]},
-  { id:"s5", name:"Montar orçamento", color:"#EC4899", maxDays:5,  order:4,
-    actions:[
-      {id:"a12",day:2,type:"whatsapp",label:"Status proposta",msg:"Olá {nome}! Estou finalizando sua proposta personalizada. Algum ponto específico que precisa de atenção especial?"},
-    ]},
-  { id:"s6", name:"Não compareceu",   color:"#EF4444", maxDays:7,  order:5,
-    actions:[
-      {id:"a13",day:1,type:"whatsapp",label:"Reagendamento",msg:"Olá {nome}! Vi que não conseguimos nos falar. Ficou alguma dúvida? Podemos reagendar em outro horário?"},
-      {id:"a14",day:4,type:"ligacao", label:"Ligar",        msg:"Ligar para {nome} - tentar reagendar reunião"},
-    ]},
-  { id:"s7", name:"Proposta enviada", color:"#6366F1", maxDays:10, order:6,
-    actions:[
-      {id:"a15",day:2,type:"whatsapp",label:"Follow proposta",msg:"Olá {nome}! Enviamos a proposta há 2 dias. Teve a oportunidade de analisar? Posso esclarecer qualquer ponto!"},
-      {id:"a16",day:5,type:"ligacao", label:"Ligar",        msg:"Ligar para {nome} - discutir proposta e negociar"},
-      {id:"a17",day:9,type:"whatsapp",label:"Última chance",msg:"Oi {nome}! Não quero perder a oportunidade de trabalharmos juntos. Posso oferecer condições especiais para fecharmos esta semana?"},
-    ]},
-  { id:"s8", name:"Contratou", color:"#4ADE80", maxDays:999, order:7,
-    actions:[
-      {id:"a18",day:1,type:"whatsapp",label:"Boas-vindas",  msg:"Olá {nome}! Seja bem-vindo(a) à família OPEN Log! 🎉 Estamos muito felizes em ter {empresa} como parceiro. Em breve nossa equipe entrará em contato para os próximos passos."},
-      {id:"a19",day:7,type:"whatsapp",label:"Check-in",     msg:"Oi {nome}! Como está sendo a experiência até agora? Precisa de algo?"},
-    ]},
+  { id:"f1", name:"Novo contato",    icon:"📥", color:"#3B82F6", maxDays:7,   order:1, actions:[
+    {id:"f1a1",day:1,type:"whatsapp",label:"1º Contato",   msg:"Olá {nome}! Recebemos seu contato e em breve um especialista falará com você."},
+    {id:"f1a2",day:3,type:"whatsapp",label:"Follow-up",    msg:"Oi {nome}! Conseguiu analisar nossa apresentação? Posso te ajudar com mais informações!"},
+    {id:"f1a3",day:6,type:"ligacao", label:"Ligar",        msg:"Ligar para {nome} - primeiro contato qualificado"},
+  ]},
+  { id:"f2", name:"Enviado",         icon:"📤", color:"#8B5CF6", maxDays:3,   order:2, actions:[
+    {id:"f2a1",day:1,type:"whatsapp",label:"Confirmação",  msg:"Olá {nome}! Acabei de enviar o material para você. Qualquer dúvida estou à disposição!"},
+    {id:"f2a2",day:3,type:"whatsapp",label:"Acompanhamento",msg:"Oi {nome}! Teve a chance de ver o que te enviei? Posso explicar melhor algum ponto?"},
+  ]},
+  { id:"f3", name:"Em conversa",     icon:"💬", color:"#F59E0B", maxDays:14,  order:3, actions:[
+    {id:"f3a1",day:2,type:"whatsapp",label:"Engajamento",  msg:"Olá {nome}! Para te ajudar melhor, pode me contar qual é seu principal desafio hoje?"},
+    {id:"f3a2",day:5,type:"whatsapp",label:"Proposta valor",msg:"Oi {nome}! Acredito que posso te ajudar muito com sua necessidade. Quando podemos conversar melhor?"},
+    {id:"f3a3",day:10,type:"ligacao",label:"Ligar",        msg:"Ligar para {nome} - aprofundar conversa e qualificar"},
+  ]},
+  { id:"f4", name:"Agendou reunião", icon:"📅", color:"#10B981", maxDays:3,   order:4, actions:[
+    {id:"f4a1",day:0,type:"whatsapp",label:"Confirmação",  msg:"Olá {nome}! 📅 Reunião confirmada! Estou preparando uma apresentação personalizada para você. Qualquer dúvida estou à disposição!"},
+    {id:"f4a2",day:1,type:"whatsapp",label:"Lembrete D-1", msg:"Oi {nome}! Só lembrando da nossa reunião amanhã. Até lá! 😊"},
+  ]},
+  { id:"f5", name:"Proposta",        icon:"📋", color:"#6366F1", maxDays:10,  order:5, actions:[
+    {id:"f5a1",day:2,type:"whatsapp",label:"Status proposta",msg:"Olá {nome}! Estou finalizando sua proposta. Algum ponto específico que precisa de atenção especial?"},
+    {id:"f5a2",day:5,type:"whatsapp",label:"Follow proposta",msg:"Oi {nome}! Enviei a proposta há alguns dias. Teve a oportunidade de analisar? Posso esclarecer qualquer ponto!"},
+    {id:"f5a3",day:9,type:"ligacao", label:"Ligar",        msg:"Ligar para {nome} - discutir proposta e negociar"},
+  ]},
+  { id:"f6", name:"Fechado",         icon:"✅", color:"#4ADE80", maxDays:999, order:6, actions:[
+    {id:"f6a1",day:1,type:"whatsapp",label:"Boas-vindas",  msg:"Olá {nome}! Seja bem-vindo(a)! 🎉 Estamos muito felizes em ter você como parceiro. Em breve nossa equipe entrará em contato para os próximos passos."},
+    {id:"f6a2",day:7,type:"whatsapp",label:"Check-in",     msg:"Oi {nome}! Como está sendo a experiência até agora? Precisa de algo?"},
+  ]},
+  { id:"f7", name:"Perdido",         icon:"❌", color:"#F87171", maxDays:999, order:7, actions:[
+    {id:"f7a1",day:3,type:"whatsapp",label:"Reativação",   msg:"Olá {nome}! Sei que o momento pode não ter sido ideal. Caso mude de ideia, estamos aqui!"},
+  ]},
 ];
 
 // Runtime state - mutable
@@ -1528,11 +1522,11 @@ function CentralDecisao({ leads, onSetPage, onAcionar, leadStages=[] }) {
     const pendingCadence = getCadencePending(l).length>0;
     return overdueActions||pendingCadence;
   }).sort((a,b)=>(b.score||0)-(a.score||0)).slice(0,10);
-  const STAGE_ORDER = ["Novo cliente","Conversando","Relacionamento","Reunião agendada","Montar orçamento","Não compareceu","Proposta enviada","Contratou"];
+  const STAGE_ORDER = ["Novo cliente","Conversando","Agendou reunião","Relacionamento","Reunião agendada","Montar orçamento","Não compareceu","Proposta enviada","Contratou"];
   const stageIdx = (l) => STAGE_ORDER.indexOf(l.status);
   const quentes = leads.filter(l=>(l.score||0)>=70&&stageIdx(l)>=1).sort((a,b)=>(stageIdx(b)-stageIdx(a))||((b.score||0)-(a.score||0))).slice(0,10);
   const emRisco = leads.filter(l=>diasSemContato(l)>=5&&stageIdx(l)<=2&&l.status!=="Contratou").sort((a,b)=>diasSemContato(b)-diasSemContato(a)).slice(0,10);
-  const pipelineStages = ["Conversando","Relacionamento","Reunião agendada","Proposta enviada"];
+  const pipelineStages = ["Conversando","Agendou reunião","Relacionamento","Reunião agendada","Proposta enviada"];
   const pipeline = pipelineStages.map(stage=>{
     const sl=leads.filter(l=>l.status===stage);
     const rate=stage==="Proposta enviada"?0.4:stage==="Reunião agendada"?0.25:stage==="Relacionamento"?0.15:0.08;
@@ -1639,10 +1633,24 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
   },[tenantId]);
 
   // Carrega dados de pós-venda diretamente da tabela pos_venda (fonte correta)
+  // Normaliza status_envio: valores do banco → padrão do app
+  const normalizePvStatus = (s) => ({
+    "Enviado":         "Enviado",
+    "Em conversa":     "Respondeu",
+    "Agendou reunião": "Agendou reunião",
+    "Sem resposta":    "Sem resposta",
+  }[s] || (s ? s : "Enviado"));
+
   useEffect(()=>{
     if(!tenantId) return;
     sbFetch("pos_venda?select=*&tenant_id=eq."+tenantId+"&order=data_envio.desc")
-      .then(rows=>setPosVendaData(Array.isArray(rows)?rows:[]))
+      .then(rows=>{
+        const normalized = (Array.isArray(rows)?rows:[]).map(r=>({
+          ...r,
+          status_envio: normalizePvStatus(r.status_envio),
+        }));
+        setPosVendaData(normalized);
+      })
       .catch(()=>{});
   },[tenantId]);
 
@@ -1697,18 +1705,28 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
   const total = isPosVenda ? posLeads.length : (totalLeadsNoFunil || fl.length);
   const conv  = isPosVenda
     ? posLeads.filter(c=>["agendou"].includes(getPvStageId(c))).length
+    : modTab==="prospeccao" ? countByStage("fechado")
+    : modTab==="receptivo"  ? countByStage("r5")
     : countByStage("s8");
   const neg   = isPosVenda
     ? posLeads.filter(c=>["em_conversa","agendou"].includes(getPvStageId(c))).length
+    : modTab==="prospeccao" ? countByStage("em_conversa")+countByStage("agendou_reuniao")+countByStage("proposta")
+    : modTab==="receptivo"  ? countByStage("r2b")+countByStage("r2c")+countByStage("r3")+countByStage("r4")
     : (countByStage("s5")+countByStage("s7"));
   const novos = isPosVenda
     ? posLeads.filter(c=>getPvStageId(c)==="aguardando").length
+    : modTab==="prospeccao" ? countByStage("novo")
+    : modTab==="receptivo"  ? countByStage("r1")
     : countByStage("s1");
   const taxa=total?Math.round((conv/total)*100):0;
 
-  // Funil adaptado por módulo — pós-venda usa PV_STAGES com lead_stages
+  // Funil adaptado por módulo — cada módulo usa seus próprios stages
   const FUNIL_VISIBLE = modTab==="pos_venda"
     ? PV_STAGES.map(s=>({label:s.name, v:posLeads.filter(c=>getPvStageId(c)===s.id).length, c:s.color}))
+    : modTab==="prospeccao"
+    ? PROSP_STAGES.map(s=>({label:s.icon+" "+s.name, v:countByStage(s.id), c:s.color}))
+    : modTab==="receptivo"
+    ? RECEPTIVO_STAGES.filter(s=>s.id!=="r6").map(s=>({label:s.icon+" "+s.name, v:countByStage(s.id), c:s.color}))
     : FUNIL_STAGES.map(s=>({label:s.name, v:countByStage(s.id), c:s.color}));
   const maxF=Math.max(...FUNIL_VISIBLE.map(f=>f.v),1);
   const totalForFunil = isPosVenda ? posLeads.length : total;
@@ -1880,11 +1898,27 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
   );
 }
 
-function CompanyProfile({profile, onSave}) {
+function CompanyProfile({profile, onSave, tenantId}) {
   const [form,setForm]=useState(profile);
+  const [saving,setSaving]=useState(false);
   const [saved,setSaved]=useState(false);
+  const [saveErr,setSaveErr]=useState("");
+  // Sync form when profile prop changes (ex: carregou do Supabase após mount)
+  useEffect(()=>{ setForm(profile); },[profile]);
   const f=(k,v)=>setForm(p=>({...p,[k]:v}));
-  const save=()=>{onSave(form);setSaved(true);setTimeout(()=>setSaved(false),2000);};
+  const save=async()=>{
+    setSaving(true); setSaveErr("");
+    try {
+      const updated = await saveTenantProfile(form, tenantId);
+      onSave(updated);
+      setSaved(true);
+      setTimeout(()=>setSaved(false),3000);
+    } catch(e) {
+      setSaveErr("Erro ao salvar: "+e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
   const fieldStyle={...inp,minHeight:undefined};
   const taStyle={...inp,resize:"vertical",fontFamily:"inherit"};
   return (
@@ -1932,9 +1966,13 @@ function CompanyProfile({profile, onSave}) {
         <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>🏆 Cases de Sucesso / Referências</div>
         <textarea style={{...taStyle,minHeight:80}} value={form.cases} onChange={e=>f("cases",e.target.value)} placeholder="Mencione clientes atendidos, resultados obtidos, certificações. Isso será usado para construir credibilidade nas mensagens de abordagem..."/>
       </div>
-      <div style={{display:"flex",gap:10,alignItems:"center"}}>
-        <button style={btnP} onClick={save}><Icon d={IC.save} size={15} color="#fff"/>{saved?"✅ Salvo com sucesso!":"Salvar Perfil"}</button>
-        {saved&&<span style={{fontSize:12,color:"#4ADE80"}}>Perfil atualizado - a próxima busca usará estas informações.</span>}
+      <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+        <button style={{...btnP,opacity:saving?0.7:1}} onClick={save} disabled={saving}>
+          <Icon d={IC.save} size={15} color="#fff"/>
+          {saving?"Salvando...":saved?"✅ Salvo!":"Salvar Perfil"}
+        </button>
+        {saved&&<span style={{fontSize:12,color:"#4ADE80"}}>Perfil salvo no Supabase — próxima busca usará estas informações.</span>}
+        {saveErr&&<span style={{fontSize:12,color:"#F87171"}}>{saveErr}</span>}
       </div>
     </div>
   );
@@ -3500,30 +3538,100 @@ function FunnelBell({ lead, onAction }) {
 }
 
 // ─── FUNIL PAGE - aba do usuário ─────────────────────────────────────────────
+// Mapeia stage do módulo nativo → id do step unificado do funil
+const MODULE_STAGE_TO_FUNIL = {
+  // Prospecção
+  "novo":             "f1",
+  "primeiro_contato": "f1",
+  "em_conversa":      "f3",
+  "agendou_reuniao":  "f4",
+  "proposta":         "f5",
+  "fechado":          "f6",
+  "perdido":          "f7",
+  // Receptivo
+  "r1":  "f1", // Novo contato
+  "r2":  "f1", // Qualificando
+  "r2b": "f3", // Em conversa
+  "r2c": "f4", // Agendou reunião
+  "r3":  "f5", // Proposta
+  "r4":  "f5", // Negociando → Proposta
+  "r5":  "f6", // Fechado
+  "r6":  "f7", // Perdido
+  // Pós-venda (status_envio normalizado)
+  "Aguardando":        "f1",
+  "Enviado":           "f2",
+  "Respondeu":         "f3",
+  "Agendou reunião":   "f4",
+  "Sem resposta":      "f7",
+};
+
+const getFunilStepId = (lead) => {
+  // Tenta via funilStage (campo salvo na leads table)
+  if(lead.funilStage && FUNIL_STAGES.find(s=>s.id===lead.funilStage)) return lead.funilStage;
+  // Mapeamento pelo stage do módulo
+  const modStage = lead.funil_stage || lead.funilStage || lead.status_envio;
+  if(modStage && MODULE_STAGE_TO_FUNIL[modStage]) return MODULE_STAGE_TO_FUNIL[modStage];
+  // Fallback pelo nome do step (compatibilidade)
+  const byName = FUNIL_STAGES.find(s=>s.name===lead.status);
+  if(byName) return byName.id;
+  return "f1";
+};
+
+const normalizaPvStatusFunil = (s) => ({
+  "Enviado":         "Enviado",
+  "Em conversa":     "Respondeu",
+  "Agendou reunião": "Agendou reunião",
+  "Sem resposta":    "Sem resposta",
+}[s] || s || "Aguardando");
+
 function FunnelPage({ leads, onUpdateLead, currentUser, isMaster }) {
   const [tick, setTick] = useState(0);
   const refresh = () => setTick(t=>t+1);
+  const [modTab, setModTab] = useState("prospeccao"); // prospeccao | receptivo | pos_venda
   const [filter, setFilter] = useState("all"); // all | pending | overdue
+  const [pvData, setPvData] = useState([]);
+  const [pvLoading, setPvLoading] = useState(false);
   const tenantId = currentUser?.tenant_id;
 
-  // Init stages for leads that have funilStage set
-  // Always sync LEAD_STAGE from lead.status (source of truth)
-  leads.forEach(l=>{
-    const byStatus = FUNIL_STAGES.find(s=>s.name===l.status);
-    const stageId = byStatus?.id || l.funilStage || FUNIL_STAGES[0]?.id || "s1";
-    setLeadStage(l.id, stageId);
-  });
+  // Carrega pos_venda quando aba é selecionada
+  useEffect(()=>{
+    if(modTab!=="pos_venda"||!tenantId) return;
+    setPvLoading(true);
+    Promise.all([
+      sbFetch("pos_venda_agenda?select=*&tenant_id=eq."+tenantId+"&status=neq.processado&order=created_at.desc").catch(()=>[]),
+      sbFetch("pos_venda?select=*&tenant_id=eq."+tenantId+"&order=data_envio.desc").catch(()=>[]),
+    ]).then(([agenda, pv])=>{
+      const agRows = (Array.isArray(agenda)?agenda:[]).map(a=>({
+        id: a.id, name: a.empresa||a.nome||"—", empresa: a.empresa,
+        status_envio: "Aguardando", _source:"agenda",
+      }));
+      const pvRows = (Array.isArray(pv)?pv:[]).map(r=>({
+        id: r.id, name: r.empresa||r.nome||"—", empresa: r.empresa,
+        status_envio: normalizaPvStatusFunil(r.status_envio),
+      }));
+      setPvData([...agRows,...pvRows]);
+    }).finally(()=>setPvLoading(false));
+  },[modTab, tenantId]);
 
-  // Persiste mudança de estágio no Supabase
-  const handleMoveStage = async (lead, newStage) => {
-    setLeadStage(lead.id, newStage.id);
-    onUpdateLead({...lead, funilStage: newStage.id, status: newStage.name});
+  // Leads por módulo
+  const prospLeads = leads.filter(l=>l.module==="prospeccao"||(l.module==null&&!["receptivo","pos_venda"].includes(l.module)));
+  const recepLeads = leads.filter(l=>l.module==="receptivo");
+  const pvLeads    = pvData;
+
+  const activeLeads = modTab==="prospeccao" ? prospLeads
+                    : modTab==="receptivo"  ? recepLeads
+                    : pvLeads;
+
+  // Persiste mudança de estágio no Supabase (só para leads normais)
+  const handleMoveStage = async (lead, newFunilStage) => {
+    if(modTab==="pos_venda") return; // PV é read-only no funil
+    onUpdateLead({...lead, funilStage: newFunilStage.id, status: newFunilStage.name});
     refresh();
     if(tenantId) {
       try {
         await sbFetch("lead_stages", "POST", {
           lead_id: lead.id,
-          stage_id: newStage.id,
+          stage_id: newFunilStage.id,
           entered_at: new Date().toISOString(),
           tenant_id: tenantId,
           actions_done: [],
@@ -3532,26 +3640,43 @@ function FunnelPage({ leads, onUpdateLead, currentUser, isMaster }) {
     }
   };
 
-  const allPending = leads.filter(l=>getPendingActions(l).length>0);
-  const allOverdue = leads.filter(l=>getPendingActions(l).some(a=>a.daysOverdue>0));
+  const allPending = activeLeads.filter(l=>getPendingActions(l).length>0);
+  const allOverdue = activeLeads.filter(l=>getPendingActions(l).some(a=>a.daysOverdue>0));
+  const displayed  = filter==="pending" ? allPending : filter==="overdue" ? allOverdue : activeLeads;
 
-  const displayed = filter==="pending" ? allPending : filter==="overdue" ? allOverdue : leads;
+  const MOD_TABS = [
+    {id:"prospeccao", label:"📞 Prospecção", count:prospLeads.length},
+    {id:"receptivo",  label:"📥 Receptivo",  count:recepLeads.length},
+    {id:"pos_venda",  label:"📤 Pós-venda",  count:pvLeads.length},
+  ];
 
   return (
     <div>
+      {/* Header */}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:10}}>
         <div>
           <div style={{fontSize:18,fontWeight:800,color:C.text}}>🏆 Funil de Vendas</div>
-          <div style={{fontSize:12,color:C.muted,marginTop:2}}>Acompanhe seus leads e acionamentos pendentes</div>
+          <div style={{fontSize:12,color:C.muted,marginTop:2}}>Visão consolidada por módulo</div>
         </div>
+      </div>
+
+      {/* Abas de módulo */}
+      <div style={{display:"flex",gap:6,marginBottom:16,borderBottom:("1px solid "+C.border),paddingBottom:0}}>
+        {MOD_TABS.map(t=>(
+          <button key={t.id} onClick={()=>{setModTab(t.id);setFilter("all");}}
+            style={{padding:"8px 16px",border:"none",borderBottom:modTab===t.id?("2px solid "+C.accent):"2px solid transparent",background:"transparent",color:modTab===t.id?C.accent:C.muted,fontSize:12,fontWeight:modTab===t.id?700:400,cursor:"pointer",display:"flex",alignItems:"center",gap:6,marginBottom:-1}}>
+            {t.label}
+            <span style={{fontSize:9,background:modTab===t.id?(C.accent+"22"):C.border,color:modTab===t.id?C.accent:C.faint,padding:"1px 6px",borderRadius:20,fontWeight:700}}>{t.count}</span>
+          </button>
+        ))}
       </div>
 
       {/* KPIs */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}} className="mob-grid-1">
         {[
-          {label:"Leads no funil",val:leads.filter(l=>getLeadStage(l.id)).length,color:C.accent,icon:"👥"},
-          {label:"Acionamentos pendentes",val:allPending.length,color:"#F59E0B",icon:"🔔"},
-          {label:"Atrasados",val:allOverdue.length,color:"#EF4444",icon:"⚠️"},
+          {label:"Leads no módulo",         val:activeLeads.length,    color:C.accent,    icon:"👥"},
+          {label:"Acionamentos pendentes",  val:allPending.length,     color:"#F59E0B",   icon:"🔔"},
+          {label:"Atrasados",               val:allOverdue.length,     color:"#EF4444",   icon:"⚠️"},
         ].map(k=>(
           <div key={k.label} style={{...card({padding:14}),borderLeft:("3px solid "+k.color)}}>
             <div style={{fontSize:20,marginBottom:4}}>{k.icon}</div>
@@ -3561,62 +3686,77 @@ function FunnelPage({ leads, onUpdateLead, currentUser, isMaster }) {
         ))}
       </div>
 
-      {/* Filter */}
+      {/* Filtros */}
       <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
-        {[["all","Todos no funil"],["pending","Com pendências"],["overdue","Atrasados"]].map(([v,l])=>(
-          <button key={v} onClick={()=>setFilter(v)} style={{padding:"5px 14px",borderRadius:20,border:("1px solid "+filter===v?C.accent:C.border),background:filter===v?(C.accent+"18"):"transparent",color:filter===v?C.accent:C.muted,fontSize:11,fontWeight:filter===v?700:400,cursor:"pointer"}}>{l}</button>
+        {[["all","Todos"],["pending","Com pendências"],["overdue","Atrasados"]].map(([v,l])=>(
+          <button key={v} onClick={()=>setFilter(v)}
+            style={{padding:"5px 14px",borderRadius:20,border:("1px solid "+(filter===v?C.accent:C.border)),background:filter===v?(C.accent+"18"):"transparent",color:filter===v?C.accent:C.muted,fontSize:11,fontWeight:filter===v?700:400,cursor:"pointer"}}>{l}
+          </button>
         ))}
       </div>
 
-      {/* Pipeline kanban */}
+      {/* Pipeline kanban — steps do funil unificado */}
       <div style={{display:"flex",gap:10,overflowX:"auto",paddingBottom:12}}>
         {FUNIL_STAGES.map(stage=>{
-          // Use status as single source of truth (same as Dashboard)
-          const stageLeads = displayed.filter(l=>l.status===stage.name);
+          // Mapeia cada lead do módulo para o step do funil
+          const stageLeads = displayed.filter(l=>getFunilStepId(l)===stage.id);
+          const isPV = modTab==="pos_venda";
           return (
-            <div key={stage.id} style={{minWidth:220,flex:"0 0 220px"}}>
+            <div key={stage.id} style={{minWidth:210,flex:"0 0 210px"}}>
               <div style={{padding:"8px 12px",borderRadius:"8px 8px 0 0",background:(stage.color+"22"),borderBottom:("2px solid "+stage.color),marginBottom:8}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,justifyContent:"space-between"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6}}>
-                    <div style={{width:8,height:8,borderRadius:"50%",background:stage.color}}/>
-                    <span style={{fontSize:12,fontWeight:700,color:stage.color}}>{stage.name}</span>
+                  <div style={{display:"flex",alignItems:"center",gap:5}}>
+                    <span style={{fontSize:14}}>{stage.icon}</span>
+                    <span style={{fontSize:11,fontWeight:700,color:stage.color}}>{stage.name}</span>
                   </div>
-                  <span style={{fontSize:10,color:C.faint,background:C.border,padding:"1px 6px",borderRadius:20}}>{stageLeads.length}</span>
+                  <span style={{fontSize:10,color:C.faint,background:C.border,padding:"1px 6px",borderRadius:20,fontWeight:700}}>{stageLeads.length}</span>
                 </div>
-                <div style={{fontSize:10,color:C.faint,marginTop:2}}>⏱ Máx {stage.maxDays} dias</div>
+                {!isPV&&<div style={{fontSize:9,color:C.faint,marginTop:2}}>⏱ Máx {stage.maxDays}d</div>}
               </div>
               <div style={{display:"flex",flexDirection:"column",gap:8}}>
                 {stageLeads.map(lead=>{
-                  const ls=getLeadStage(lead.id);
-                  const daysIn=ls?Math.floor((Date.now()-new Date(ls.enteredAt))/(1000*60*60*24)):0;
-                  const pending=getPendingActions(lead);
-                  const overdue=pending.filter(a=>a.daysOverdue>0);
-                  const warn=daysIn>=stage.maxDays;
+                  const ls      = getLeadStage(lead.id);
+                  const daysIn  = ls ? Math.floor((Date.now()-new Date(ls.enteredAt))/(1000*60*60*24)) : 0;
+                  const pending = getPendingActions(lead);
+                  const overdue = pending.filter(a=>a.daysOverdue>0);
+                  const warn    = !isPV && daysIn >= stage.maxDays;
+                  const borderColor = warn?"#EF4444":overdue.length>0?"#F59E0B":C.border;
                   return (
-                    <div key={lead.id} style={{...card({padding:10}),border:("1px solid "+warn?"#EF4444":overdue.length>0?"#F59E0B":C.border),position:"relative"}}>
+                    <div key={lead.id||lead.id} style={{...card({padding:10}),border:("1px solid "+borderColor)}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
-                        <div style={{fontSize:12,fontWeight:700,color:C.text,flex:1,marginRight:6}}>{lead.name}</div>
-                        <FunnelBell lead={lead} onAction={refresh}/>
+                        <div style={{fontSize:12,fontWeight:700,color:C.text,flex:1,marginRight:6,lineHeight:1.3}}>{lead.name||lead.empresa}</div>
+                        {!isPV&&<FunnelBell lead={lead} onAction={refresh}/>}
                       </div>
-                      <div style={{fontSize:11,color:C.muted,marginBottom:4}}>{lead.company}</div>
-                      <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:6}}>
-                        <span style={{fontSize:9,color:warn?"#F87171":C.faint,background:warn?"rgba(248,113,113,0.1)":C.border,padding:"1px 6px",borderRadius:20}}>{daysIn}d na etapa</span>
-                        {pending.length>0&&<span style={{fontSize:9,color:overdue.length>0?"#F87171":"#F59E0B",background:overdue.length>0?"rgba(248,113,113,0.1)":"rgba(245,158,11,0.1)",padding:"1px 6px",borderRadius:20}}>🔔 {pending.length} pendente(s)</span>}
+                      {lead.company&&<div style={{fontSize:11,color:C.muted,marginBottom:4}}>{lead.company}</div>}
+                      <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:isPV?0:6}}>
+                        {!isPV&&<span style={{fontSize:9,color:warn?"#F87171":C.faint,background:warn?"rgba(248,113,113,0.1)":C.border,padding:"1px 6px",borderRadius:20}}>{daysIn}d na etapa</span>}
+                        {!isPV&&pending.length>0&&<span style={{fontSize:9,color:overdue.length>0?"#F87171":"#F59E0B",background:overdue.length>0?"rgba(248,113,113,0.1)":"rgba(245,158,11,0.1)",padding:"1px 6px",borderRadius:20}}>🔔 {pending.length}</span>}
+                        {isPV&&lead.status_envio&&<span style={{fontSize:9,color:C.accent,background:C.accent+"18",padding:"1px 6px",borderRadius:20}}>{lead.status_envio}</span>}
                       </div>
-                      {/* Move stage */}
-                      <select value={stage.id} onChange={e=>{const newStage=FUNIL_STAGES.find(s=>s.id===e.target.value);if(!newStage)return;handleMoveStage(lead,newStage);}}
-                        style={{width:"100%",background:C.sidebar,border:("1px solid "+C.border),borderRadius:6,color:C.text,fontSize:10,padding:"3px 6px"}}>
-                        {FUNIL_STAGES.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
-                      </select>
+                      {/* Move stage — só para módulos não-PV */}
+                      {!isPV&&(
+                        <select value={getFunilStepId(lead)}
+                          onChange={e=>{const ns=FUNIL_STAGES.find(s=>s.id===e.target.value);if(!ns)return;handleMoveStage(lead,ns);}}
+                          style={{width:"100%",background:C.sidebar,border:("1px solid "+C.border),borderRadius:6,color:C.text,fontSize:10,padding:"3px 6px"}}>
+                          {FUNIL_STAGES.map(s=><option key={s.id} value={s.id}>{s.icon} {s.name}</option>)}
+                        </select>
+                      )}
                     </div>
                   );
                 })}
-                {stageLeads.length===0&&<div style={{fontSize:11,color:C.faint,textAlign:"center",padding:"12px 0",fontStyle:"italic"}}>Nenhum lead</div>}
+                {stageLeads.length===0&&<div style={{fontSize:11,color:C.faint,textAlign:"center",padding:"12px 0",fontStyle:"italic"}}>—</div>}
               </div>
             </div>
           );
         })}
       </div>
+
+      {modTab==="pos_venda"&&pvLoading&&(
+        <div style={{textAlign:"center",padding:24,color:C.muted,fontSize:13}}>⏳ Carregando pós-venda...</div>
+      )}
+      {modTab==="pos_venda"&&!pvLoading&&(
+        <div style={{fontSize:11,color:C.faint,marginTop:8,textAlign:"center"}}>📤 Pós-venda é exibido em modo leitura. Para mover etapas, acesse o módulo Pós-venda.</div>
+      )}
     </div>
   );
 }
@@ -3930,6 +4070,7 @@ function Cadencias({ leads, currentUser, onUpdateLead }) {
   const tenantId     = currentUser?.tenant_id;
   const currentUserId = currentUser?.id || "local";
   const isOwner = currentUser?.role === "owner" || currentUser?.role === "master";
+  const canEdit = isOwner || currentUser?.role === "admin";
 
   // ── Carrega cadências do Supabase ─────────────────────────────────────────
   useEffect(()=>{
@@ -4285,9 +4426,11 @@ function Cadencias({ leads, currentUser, onUpdateLead }) {
 
 // Funil do Receptivo
 const RECEPTIVO_STAGES = [
-  { id:"r1", name:"Novo contato",    color:"#00B4D8", maxHours:1,  icon:"📥" },
-  { id:"r2", name:"Qualificando",    color:"#8B5CF6", maxHours:24, icon:"🔍" },
-  { id:"r3", name:"Proposta",        color:"#F59E0B", maxHours:48, icon:"📋" },
+  { id:"r1",  name:"Novo contato",    color:"#00B4D8", maxHours:1,   icon:"📥" },
+  { id:"r2",  name:"Qualificando",    color:"#8B5CF6", maxHours:24,  icon:"🔍" },
+  { id:"r2b", name:"Em conversa",     color:"#F59E0B", maxHours:48,  icon:"💬" },
+  { id:"r2c", name:"Agendou reunião", color:"#10B981", maxHours:72,  icon:"📅" },
+  { id:"r3",  name:"Proposta",        color:"#F59E0B", maxHours:48,  icon:"📋" },
   { id:"r4", name:"Negociando",      color:"#6366F1", maxHours:72, icon:"🤝" },
   { id:"r5", name:"Fechado",         color:"#4ADE80", maxHours:999,icon:"✅" },
   { id:"r6", name:"Perdido",         color:"#F87171", maxHours:999,icon:"❌" },
@@ -5565,6 +5708,62 @@ function Settings({user}) {
 // ─── MAIN APP ────────────────────────────────────────────────────────────────
 const DEFAULT_PROFILE={ companyName:"", segment:"", city:"São Paulo", founded:"", product:"", audience:"", coverage:"", history:"", differentials:"", valueProposition:"", cases:"" };
 
+// ─── tenant_profile helpers ───────────────────────────────────────────────────
+const dbToProfile = (r) => ({
+  companyName:      r.company_name      || "",
+  segment:          r.segment           || "",
+  city:             r.city              || "",
+  founded:          r.founded           || "",
+  product:          r.product           || "",
+  audience:         r.audience          || "",
+  coverage:         r.coverage          || "",
+  history:          r.history           || "",
+  differentials:    r.differentials     || "",
+  valueProposition: r.value_proposition || "",
+  cases:            r.cases             || "",
+});
+
+const profileToDb = (p, tenantId) => ({
+  tenant_id:         tenantId,
+  company_name:      p.companyName      || "",
+  segment:           p.segment          || "",
+  city:              p.city             || "",
+  founded:           p.founded          || "",
+  product:           p.product          || "",
+  audience:          p.audience         || "",
+  coverage:          p.coverage         || "",
+  history:           p.history          || "",
+  differentials:     p.differentials    || "",
+  value_proposition: p.valueProposition || "",
+  cases:             p.cases            || "",
+  updated_at:        new Date().toISOString(),
+});
+
+const loadTenantProfile = async (tenantId) => {
+  if(!tenantId) return null;
+  try {
+    const rows = await sbFetch("tenant_profile?tenant_id=eq."+tenantId+"&select=*&limit=1");
+    if(rows && rows.length > 0) return dbToProfile(rows[0]);
+    return null;
+  } catch(e) {
+    console.warn("loadTenantProfile error:", e.message);
+    return null;
+  }
+};
+
+const saveTenantProfile = async (profile, tenantId) => {
+  if(!tenantId) throw new Error("tenant_id obrigatório");
+  const payload = profileToDb(profile, tenantId);
+  // Upsert via POST com header prefer=resolution=merge-duplicates
+  const res = await sbFetch(
+    "tenant_profile?on_conflict=tenant_id",
+    "POST",
+    payload,
+    { "Prefer": "resolution=merge-duplicates,return=representation" }
+  );
+  return res && res[0] ? dbToProfile(res[0]) : profile;
+};
+
 function Chev({o}) { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{transition:"transform 0.2s",transform:o?"none":"rotate(180deg)"}}><path d="M15 18l-6-6 6-6"/></svg>; }
 
 // ─── MÓDULO REATIVAÇÃO ────────────────────────────────────────────────────────
@@ -5784,12 +5983,13 @@ function Reativacao({ leads, onUpdateLead, onSetPage }) {
 
 // ─── MÓDULO PROSPECÇÃO ────────────────────────────────────────────────────────
 const PROSP_STAGES = [
-  {id:"novo",         name:"Novo",           color:"#6B7280", icon:"🆕"},
-  {id:"primeiro_contato", name:"1º Contato", color:"#3B82F6", icon:"📞"},
-  {id:"em_conversa",  name:"Em conversa",    color:"#F59E0B", icon:"💬"},
-  {id:"proposta",     name:"Proposta",       color:"#8B5CF6", icon:"📄"},
-  {id:"fechado",      name:"Fechado",        color:"#4ADE80", icon:"🎉"},
-  {id:"perdido",      name:"Perdido",        color:"#F87171", icon:"❌"},
+  {id:"novo",             name:"Novo",             color:"#6B7280", icon:"🆕"},
+  {id:"primeiro_contato", name:"1º Contato",       color:"#3B82F6", icon:"📞"},
+  {id:"em_conversa",      name:"Em conversa",      color:"#F59E0B", icon:"💬"},
+  {id:"agendou_reuniao",  name:"Agendou reunião",  color:"#10B981", icon:"📅"},
+  {id:"proposta",         name:"Proposta",         color:"#8B5CF6", icon:"📄"},
+  {id:"fechado",          name:"Fechado",          color:"#4ADE80", icon:"🎉"},
+  {id:"perdido",          name:"Perdido",          color:"#F87171", icon:"❌"},
 ];
 
 function Prospeccao({ currentUser, onAddToProsp }) {
@@ -5925,7 +6125,7 @@ function Prospeccao({ currentUser, onAddToProsp }) {
       {error&&<div style={{...card({padding:12}),color:"#F87171",fontSize:12,marginBottom:16}}>{error}</div>}
 
       {/* KPIs */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:10,marginBottom:20}} className="mob-grid-2">
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:10,marginBottom:20}} className="mob-grid-2">
         {PROSP_STAGES.map(s=>(
           <div key={s.id} style={card({padding:12})}>
             <div style={{fontSize:20,fontWeight:900,color:s.color}}>{visLeads.filter(l=>getStageId(l)===s.id).length}</div>
@@ -5948,7 +6148,7 @@ function Prospeccao({ currentUser, onAddToProsp }) {
 
       {/* ── KANBAN ── */}
       {!loading&&tab==="kanban"&&(
-        <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:10,alignItems:"start"}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:10,alignItems:"start"}}>
           {PROSP_STAGES.map(stage=>{
             const cols = visLeads.filter(l=>getStageId(l)===stage.id);
             return (
@@ -6391,6 +6591,9 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
   const [sel,      setSel]      = useState(null);
   const [filtro,   setFiltro]   = useState("todos");
   const [busca,    setBusca]    = useState("");
+  // Colunas expandidas no kanban — por padrão todas fechadas
+  const [expandedCols, setExpandedCols] = useState({});
+  const toggleCol = (key) => setExpandedCols(p=>({...p,[key]:!p[key]}));
   const [showForm, setShowForm] = useState(false); // modal novo cliente
   const [showAgForm, setShowAgForm] = useState(null); // lead selecionado para agendar
   const [agForm, setAgForm]         = useState({data:"", hora:"", tipo:"whatsapp", obs:""});
@@ -6409,6 +6612,17 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
     setLoading(true);
     try {
       // Tabela principal: clientes já na pos_venda
+      // Normaliza status_envio vindo da tabela pos_venda para o padrão do app
+      const normalizaPvStatus = (s) => {
+        const map = {
+          "Enviado":          "Enviado",
+          "Em conversa":      "Respondeu",
+          "Agendou reunião":  "Agendou reunião",
+          "Sem resposta":     "Sem resposta",
+        };
+        return map[s] || s || null; // null permanece null — sem fallback
+      };
+
       const rows = await sbFetch("pos_venda?select=*&tenant_id=eq."+tenantId+"&order=data_cadastro.desc");
       // Agenda: todos os status (pendente, erro, processado)
       const agenda = await sbFetch("pos_venda_agenda?select=*&tenant_id=eq."+tenantId+"&order=data_agendamento.asc");
@@ -6436,8 +6650,16 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
         };
       };
 
-      const agendaRows = (Array.isArray(agenda)?agenda:[]).map(normaliza);
-      setClientes([...agendaRows, ...(Array.isArray(rows)?rows:[])]);
+      // Exclui "processado" da agenda — esses já existem em pos_venda como registros reais
+      const agendaRows = (Array.isArray(agenda)?agenda:[])
+        .filter(a=>a.status!=="processado")
+        .map(normaliza);
+      const pvRows = (Array.isArray(rows)?rows:[]).map(r=>({
+        ...r,
+        status_envio: normalizaPvStatus(r.status_envio),
+      }));
+      setClientes([...agendaRows, ...pvRows]);
+      console.log("[PosVenda] agenda filtrada:", agendaRows.length, "pos_venda:", pvRows.length);
       setLeadStages([]);
       setError("");
     } catch(e) {
@@ -6520,9 +6742,9 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
   const agendados   = clientes.filter(c=>c._source==="agenda_pendente").length;
   const comErro     = clientes.filter(c=>c._source==="agenda_erro").length;
   const processados = clientes.filter(c=>!c._source);
-  const total       = clientes.length;
-  const enviados    = processados.filter(c=>(c.status_envio||"Aguardando")!=="Aguardando").length;
-  const responderam = processados.filter(c=>["Respondeu"].includes(c.status_envio||"")).length;
+  const total       = processados.length; // só registros reais da pos_venda
+  const enviados    = processados.filter(c=>c.status_envio&&c.status_envio!=="Aguardando").length;
+  const responderam = processados.filter(c=>["Respondeu","Agendou reunião"].includes(c.status_envio||"")).length;
   const txResposta  = enviados>0?Math.round((responderam/enviados)*100):0;
 
   // Todos os status possíveis — agenda + pos_venda
@@ -6602,46 +6824,54 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
               </div>
               <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8}}>
                 {[
-                  {status:"Aguardando", source:"agenda_pendente", color:"#6B7280", icon:"⏳"},
-                  {status:"Erro",       source:"agenda_erro",     color:"#EF4444", icon:"⚠️"},
-                  {status:"Agendado",   source:"agenda_processado",color:"#8B5CF6",icon:"🕐"},
+                  {status:"Aguardando", source:"agenda_pendente",  color:"#6B7280", icon:"⏳"},
+                  {status:"Erro",       source:"agenda_erro",      color:"#EF4444", icon:"⚠️"},
+                  {status:"Agendado",   source:"agenda_processado",color:"#8B5CF6", icon:"🕐"},
                 ].map(({status,source,color,icon})=>{
                   const stageLeads = clientes.filter(c=>c._source===source);
+                  const colKey = "ag_"+source;
+                  const expanded = !!expandedCols[colKey];
                   return (
                     <div key={status} style={{minWidth:220,flex:"0 0 220px"}}>
-                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,padding:"8px 12px",background:color+"18",borderRadius:8,border:"1px solid "+color+"33"}}>
+                      {/* Header clicável — sempre visível */}
+                      <div onClick={()=>toggleCol(colKey)}
+                        style={{display:"flex",alignItems:"center",gap:6,marginBottom:expanded?10:0,padding:"8px 12px",background:color+"18",borderRadius:expanded?8:"8px",border:"1px solid "+color+"33",cursor:"pointer",userSelect:"none"}}>
                         <span>{icon}</span>
                         <span style={{fontSize:12,fontWeight:700,color}}>{status}</span>
                         <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color,background:color+"22",padding:"1px 8px",borderRadius:20}}>{stageLeads.length}</span>
+                        <span style={{fontSize:10,color,opacity:0.7,marginLeft:4}}>{expanded?"▲":"▼"}</span>
                       </div>
-                      <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                        {stageLeads.map(c=>(
-                          <div key={c.id} onClick={()=>setSel(c)}
-                            style={{...card({padding:12}),border:"1px solid "+C.border,cursor:"pointer",transition:"all 0.15s"}}
-                            onMouseEnter={e=>e.currentTarget.style.borderColor=color}
-                            onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
-                            <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:4}}>{c.nome_formatado||c.nome}</div>
-                            {c.vendedor&&<div style={{fontSize:9,color:C.faint,marginBottom:4}}>👤 {c.vendedor}</div>}
-                            <div style={{fontSize:10,color:C.muted}}>{c.celular||"—"}</div>
-                            {c.data_cadastro_fmt&&<div style={{fontSize:10,color:C.faint,marginTop:2}}>📅 {c.data_cadastro_fmt}</div>}
-                            {source==="agenda_erro"&&(
-                              <button onClick={e=>{e.stopPropagation();retentarAgenda(c);}}
-                                style={{marginTop:8,width:"100%",padding:"4px",fontSize:10,fontWeight:700,background:"#EF444420",border:"1px solid #EF444460",borderRadius:6,color:"#EF4444",cursor:"pointer"}}>
-                                🔄 Retentar
-                              </button>
-                            )}
-                            {source==="agenda_pendente"&&(
-                              <div style={{marginTop:6,fontSize:9,color:"#6B7280",fontWeight:600,textAlign:"center"}}>⏳ Aguarda data de acionamento</div>
-                            )}
-                            {source==="agenda_processado"&&(
-                              <div style={{marginTop:6,fontSize:9,color:"#8B5CF6",fontWeight:600,textAlign:"center"}}>🕐 Processado — envio pendente</div>
-                            )}
-                          </div>
-                        ))}
-                        {stageLeads.length===0&&(
-                          <div style={{padding:"16px 8px",textAlign:"center",color:C.faint,fontSize:11,border:"1px dashed "+C.border,borderRadius:8}}>Vazio</div>
-                        )}
-                      </div>
+                      {/* Cards — só aparecem quando expandido */}
+                      {expanded&&(
+                        <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:8}}>
+                          {stageLeads.map(c=>(
+                            <div key={c.id} onClick={()=>setSel(c)}
+                              style={{...card({padding:12}),border:"1px solid "+C.border,cursor:"pointer",transition:"all 0.15s"}}
+                              onMouseEnter={e=>e.currentTarget.style.borderColor=color}
+                              onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+                              <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:4}}>{c.nome_formatado||c.nome}</div>
+                              {c.vendedor&&<div style={{fontSize:9,color:C.faint,marginBottom:4}}>👤 {c.vendedor}</div>}
+                              <div style={{fontSize:10,color:C.muted}}>{c.celular||"—"}</div>
+                              {c.data_cadastro_fmt&&<div style={{fontSize:10,color:C.faint,marginTop:2}}>📅 {c.data_cadastro_fmt}</div>}
+                              {source==="agenda_erro"&&(
+                                <button onClick={e=>{e.stopPropagation();retentarAgenda(c);}}
+                                  style={{marginTop:8,width:"100%",padding:"4px",fontSize:10,fontWeight:700,background:"#EF444420",border:"1px solid #EF444460",borderRadius:6,color:"#EF4444",cursor:"pointer"}}>
+                                  🔄 Retentar
+                                </button>
+                              )}
+                              {source==="agenda_pendente"&&(
+                                <div style={{marginTop:6,fontSize:9,color:"#6B7280",fontWeight:600,textAlign:"center"}}>⏳ Aguarda data de acionamento</div>
+                              )}
+                              {source==="agenda_processado"&&(
+                                <div style={{marginTop:6,fontSize:9,color:"#8B5CF6",fontWeight:600,textAlign:"center"}}>🕐 Processado — envio pendente</div>
+                              )}
+                            </div>
+                          ))}
+                          {stageLeads.length===0&&(
+                            <div style={{padding:"16px 8px",textAlign:"center",color:C.faint,fontSize:11,border:"1px dashed "+C.border,borderRadius:8}}>Vazio</div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -6662,39 +6892,47 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
               <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8}}>
                 {PV_STATUS_EDITAVEIS.map(status=>{
                   const {color,icon} = pvMeta(status);
-                  const stageLeads = clientes.filter(c=>!c._source&&(c.status_envio||"Enviado")===status);
+                  const stageLeads = clientes.filter(c=>!c._source&&c.status_envio===status);
+                  const colKey = "pv_"+status;
+                  const expanded = !!expandedCols[colKey];
                   return (
                     <div key={status} style={{minWidth:220,flex:"0 0 220px"}}>
-                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,padding:"8px 12px",background:color+"18",borderRadius:8,border:"1px solid "+color+"33"}}>
+                      {/* Header clicável — sempre visível */}
+                      <div onClick={()=>toggleCol(colKey)}
+                        style={{display:"flex",alignItems:"center",gap:6,marginBottom:expanded?10:0,padding:"8px 12px",background:color+"18",borderRadius:8,border:"1px solid "+color+"33",cursor:"pointer",userSelect:"none"}}>
                         <span>{icon}</span>
                         <span style={{fontSize:12,fontWeight:700,color}}>{status}</span>
                         <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color,background:color+"22",padding:"1px 8px",borderRadius:20}}>{stageLeads.length}</span>
+                        <span style={{fontSize:10,color,opacity:0.7,marginLeft:4}}>{expanded?"▲":"▼"}</span>
                       </div>
-                      <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                        {stageLeads.map(c=>(
-                          <div key={c.id} onClick={()=>setSel(c)}
-                            style={{...card({padding:12}),border:"1px solid "+C.border,cursor:"pointer",transition:"all 0.15s"}}
-                            onMouseEnter={e=>e.currentTarget.style.borderColor=color}
-                            onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
-                            <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:4}}>{c.nome_formatado||c.nome}</div>
-                            {c.vendedor&&<div style={{fontSize:9,color:C.faint,marginBottom:4}}>👤 {c.vendedor}</div>}
-                            <div style={{fontSize:10,color:C.muted}}>{c.celular||c.whatsapp||"—"}</div>
-                            {c.data_cadastro&&<div style={{fontSize:10,color:C.faint,marginTop:2}}>📅 {new Date(c.data_cadastro).toLocaleDateString("pt-BR")}</div>}
-                            <div style={{marginTop:8}}>
-                              <select value={c.status_envio||"Enviado"} onClick={e=>e.stopPropagation()}
-                                onChange={e=>updateStatus(c,e.target.value)}
-                                style={{...inp,fontSize:10,padding:"3px 6px",width:"100%"}}>
-                                {PV_STATUS_EDITAVEIS.map(s=>(
-                                  <option key={s} value={s}>{s}</option>
-                                ))}
-                              </select>
+                      {/* Cards — só aparecem quando expandido */}
+                      {expanded&&(
+                        <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:8}}>
+                          {stageLeads.map(c=>(
+                            <div key={c.id} onClick={()=>setSel(c)}
+                              style={{...card({padding:12}),border:"1px solid "+C.border,cursor:"pointer",transition:"all 0.15s"}}
+                              onMouseEnter={e=>e.currentTarget.style.borderColor=color}
+                              onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+                              <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:4}}>{c.nome_formatado||c.nome}</div>
+                              {c.vendedor&&<div style={{fontSize:9,color:C.faint,marginBottom:4}}>👤 {c.vendedor}</div>}
+                              <div style={{fontSize:10,color:C.muted}}>{c.celular||c.whatsapp||"—"}</div>
+                              {c.data_cadastro&&<div style={{fontSize:10,color:C.faint,marginTop:2}}>📅 {new Date(c.data_cadastro).toLocaleDateString("pt-BR")}</div>}
+                              <div style={{marginTop:8}}>
+                                <select value={c.status_envio||""} onClick={e=>e.stopPropagation()}
+                                  onChange={e=>updateStatus(c,e.target.value)}
+                                  style={{...inp,fontSize:10,padding:"3px 6px",width:"100%"}}>
+                                  {PV_STATUS_EDITAVEIS.map(s=>(
+                                    <option key={s} value={s}>{s}</option>
+                                  ))}
+                                </select>
+                              </div>
                             </div>
-                          </div>
-                        ))}
-                        {stageLeads.length===0&&(
-                          <div style={{padding:"16px 8px",textAlign:"center",color:C.faint,fontSize:11,border:"1px dashed "+C.border,borderRadius:8}}>Vazio</div>
-                        )}
-                      </div>
+                          ))}
+                          {stageLeads.length===0&&(
+                            <div style={{padding:"16px 8px",textAlign:"center",color:C.faint,fontSize:11,border:"1px dashed "+C.border,borderRadius:8}}>Vazio</div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -7532,27 +7770,41 @@ export default function App() {
   useEffect(()=>{
     const loadFromSB = async () => {
       setSbLoading(true);
-      const firstStage = FUNIL_STAGES[0]?.id||"s1";
-      const firstName = FUNIL_STAGES[0]?.name||"Novo cliente";
+      const firstStage = FUNIL_STAGES[0]?.id||"f1";
+      const firstName = FUNIL_STAGES[0]?.name||"Novo contato";
       const initLocal = (srcLeads) => {
         srcLeads.forEach(l=>{ setLeadStage(l.id, firstStage); });
         setLeads(srcLeads.map(l=>({...l,funilStage:firstStage,status:l.status||firstName})));
       };
       try {
-        if(user?.tenant_id){ try { const t=await sbFetch("tenants?id=eq."+user.tenant_id+"&select=config"); if(t&&t[0]?.config){ const cfg=typeof t[0].config==="string"?JSON.parse(t[0].config):t[0].config; if(cfg.webhooks) setOwnerWebhooks(w=>({...w,...cfg.webhooks})); } } catch(e){ console.warn(e); } }
+        if(user?.tenant_id){
+          try {
+            const t=await sbFetch("tenants?id=eq."+user.tenant_id+"&select=config");
+            if(t&&t[0]?.config){
+              const cfg=typeof t[0].config==="string"?JSON.parse(t[0].config):t[0].config;
+              if(cfg.webhooks) setOwnerWebhooks(w=>({...w,...cfg.webhooks}));
+            }
+          } catch(e){ console.warn(e); }
+          // Carregar perfil da empresa da tabela tenant_profile
+          try {
+            const prof = await loadTenantProfile(user.tenant_id);
+            if(prof) setProfile(prof);
+          } catch(e){ console.warn("Perfil não carregado:", e.message); }
+        }
         // pos_venda excluído — tem tabela própria (pos_venda) carregada no Dashboard
         const rows = await sbFetch("leads?select=*&order=created_at.desc&tenant_id=eq."+user?.tenant_id+"&module=neq.pos_venda");
         if(rows && rows.length > 0){
           rows.forEach(r=>{ setLeadStage(r.id, r.funil_stage||firstStage); });
           setLeads(rows.map(dbToLead));
         } else {
-          initLocal(MOCK_LEADS);
+          // Tenant autenticado sem leads — começa com lista vazia (sem mock)
+          setLeads([]);
         }
         setSbError("");
       } catch(e){
-        // Silently fall back to local data - don't show error on load
-        initLocal(MOCK_LEADS);
-        console.warn("Supabase unavailable, using local data:", e.message);
+        // Supabase indisponível — sem mock, lista vazia
+        setLeads([]);
+        console.warn("Supabase unavailable:", e.message);
       } finally {
         setSbLoading(false);
       }
@@ -7616,16 +7868,16 @@ export default function App() {
   const addLead=async(lead)=>{
     if(leads.find(l=>l.name.toLowerCase()===lead.name.toLowerCase()&&l.company?.toLowerCase()===lead.company?.toLowerCase())){notify("Lead já existe no CRM","warn");return;}
     const firstStage=FUNIL_STAGES[0];
-    const withStage={...lead,funilStage:firstStage?.id||"s1",status:firstStage?.name||"Novo cliente",tenant_id:user?.tenant_id||null,module:"prospeccao"};
+    const withStage={...lead,funilStage:firstStage?.id||"f1",status:firstStage?.name||"Novo contato",tenant_id:user?.tenant_id||null,module:"prospeccao"};
     try{
       const saved=await sbInsertLead(leadToDb(withStage));
       const newLead=saved&&saved[0]?dbToLead(saved[0]):{...withStage,id:Date.now()};
-      setLeadStage(newLead.id,firstStage?.id||"s1");
+      setLeadStage(newLead.id,firstStage?.id||"f1");
       setLeads(ls=>[newLead,...ls]);
       notify("✅ "+newLead.name+" adicionado ao CRM e ao Funil");
     }catch(e){
       // Fallback to local if Supabase fails
-      setLeadStage(lead.id,firstStage?.id||"s1");
+      setLeadStage(lead.id,firstStage?.id||"f1");
       setLeads(ls=>[withStage,...ls]);
       notify("✅ "+lead.name+" adicionado (offline)");
     }
@@ -7700,7 +7952,7 @@ export default function App() {
   const groups = ["Principal","Comunicação","Gestão","Módulos","Master","Owner","Administração"].filter(g=>presentGroups.includes(g));
   const renderPage = (pg) => {
     if(pg==="dashboard") return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} users={DB.all()} currentUser={user} isMaster={isMaster}/>;
-    if(pg==="profile") return <CompanyProfile profile={profile} onSave={p=>{setProfile(p);notify("Perfil salvo!");}} />;
+    if(pg==="profile") return <CompanyProfile profile={profile} tenantId={user?.tenant_id} onSave={p=>{setProfile(p);notify("Perfil salvo!");}} />;
     if(pg==="search") return <SearchLeads onLeadsFound={addLead} onAddToProsp={addToProsp} existingLeads={leads} profile={profile} currentUser={user} ownerWebhook={ownerWebhooks.busca_leads||ownerWebhook}/>;
     if(pg==="addlead") return <AddLead onLeadsFound={addLead} existingLeads={leads} profile={profile}/>;
     if(pg==="messages") return <Messages leads={leads} profile={profile}/>;
@@ -7790,7 +8042,7 @@ export default function App() {
         <div style={{padding:open?"18px 16px 14px":"16px 10px 12px",borderBottom:("1px solid "+C.border),display:"flex",flexDirection:"column",gap:6}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:open?"space-between":"center",width:"100%"}}>
             <div style={{display:"flex",alignItems:"center",gap:9}}>
-              <div style={{width:34,height:34,background:("linear-gradient(135deg,"+C.accent+","+C.accent2+")"),borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:13,color:"#fff",flexShrink:0}}>P.TM</div>
+              <div onClick={()=>{ setPage("dashboard"); window.location.reload(); }} title="Ir para Dashboard e recarregar" style={{width:34,height:34,background:("linear-gradient(135deg,"+C.accent+","+C.accent2+")"),borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:13,color:"#fff",flexShrink:0,cursor:"pointer"}}>P.TM</div>
               {open&&<div style={{fontSize:15,fontWeight:800,color:C.text,letterSpacing:1.5,whiteSpace:"nowrap"}}>Pipe.TM</div>}
             </div>
             <button onClick={()=>setOpen(o=>!o)} style={{background:"transparent",border:("1px solid "+C.border),borderRadius:6,padding:"4px 6px",cursor:"pointer",color:C.muted,display:"flex",alignItems:"center",flexShrink:0,marginLeft:4}}><Chev o={open}/></button>
