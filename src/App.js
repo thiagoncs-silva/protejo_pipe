@@ -7573,151 +7573,179 @@ const PRODUCT_MODS_DEF = [
   {id:"suporte",    label:"🎧 Suporte",     desc:"Gestão de tickets de atendimento"},
 ];
 
-function ModulosConfig({ tenant, onSave }) {
-  // Parseia modules de qualquer formato que o Supabase retorne
-  const parseMods = (m) => {
-    if(Array.isArray(m) && m.length > 0) return m;
-    if(typeof m==="string" && m.trim().startsWith("[")) {
-      try { const p=JSON.parse(m); if(Array.isArray(p) && p.length > 0) return p; } catch(e){}
-    }
-    if(typeof m==="string" && m.length > 0 && !m.startsWith("[")) {
-      // pode ser lista separada por vírgula
-      const parts = m.split(",").map(s=>s.trim()).filter(Boolean);
-      if(parts.length > 0) return parts;
-    }
-    return null;
-  };
+// Definição completa do menu — espelha ALL_NAV do App
+const NAV_MENU_DEF = [
+  { group:"Principal", icon:"🏠", items:[
+    {id:"dashboard",  label:"Dashboard"},
+    {id:"profile",    label:"Perfil da Empresa"},
+    {id:"search",     label:"Buscar Leads"},
+    {id:"addlead",    label:"Cadastrar Empresa"},
+  ]},
+  { group:"Comunicação", icon:"💬", items:[
+    {id:"messages",   label:"Mensagens"},
+    {id:"whatsapp",   label:"Envio WhatsApp"},
+  ]},
+  { group:"Gestão", icon:"📊", items:[
+    {id:"crm",        label:"Acompanhamento"},
+    {id:"funil",      label:"Funil de Vendas"},
+    {id:"metas",      label:"Metas"},
+    {id:"cadencia",   label:"Cadências"},
+    {id:"settings",   label:"Configurações"},
+  ]},
+  { group:"Módulos", icon:"🧩", items:[
+    {id:"prospeccao", label:"Prospecção"},
+    {id:"receptivo",  label:"Receptivo"},
+    {id:"pos_venda",  label:"Pós-venda"},
+    {id:"reativacao", label:"Reativação"},
+    {id:"suporte",    label:"Suporte"},
+  ]},
+];
+// Itens obrigatórios — owner não pode desabilitar
+const NAV_REQUIRED = ["dashboard"];
 
+function ModulosConfig({ tenant, onSave }) {
   const parseCfg = (c) => {
     if(!c) return {};
     if(typeof c==="string") { try { return JSON.parse(c); } catch(e) { return {}; } }
     return c;
   };
 
-  const cfg = parseCfg(tenant?.config);
-  const originalMods = parseMods(tenant?.modules);
+  const parseMods = (m) => {
+    if(Array.isArray(m) && m.length > 0) return m;
+    if(typeof m==="string" && m.trim().startsWith("[")) {
+      try { const p=JSON.parse(m); if(Array.isArray(p) && p.length > 0) return p; } catch(e){}
+    }
+    return null;
+  };
 
-  const [activeMods, setActiveMods] = React.useState(originalMods || ["prospeccao"]);
-  const [modsChanged, setModsChanged] = React.useState(false);
-  const [perms, setPerms] = React.useState(cfg.permissions || {});
+  // nav_perms: array de IDs visíveis para esta empresa
+  // Se não existir, padrão = todos os itens
+  const ALL_NAV_IDS = NAV_MENU_DEF.flatMap(g=>g.items.map(i=>i.id));
+  const cfg = parseCfg(tenant?.config);
+
+  const getInitialNavPerms = (c) => {
+    if(c?.nav_perms && Array.isArray(c.nav_perms) && c.nav_perms.length > 0) return c.nav_perms;
+    return [...ALL_NAV_IDS]; // padrão: tudo visível
+  };
+
+  const [navPerms, setNavPerms] = React.useState(getInitialNavPerms(cfg));
   const [quota, setQuota] = React.useState(cfg.quota || 100);
-  const [expanded, setExpanded] = React.useState({});
   const [dirty, setDirty] = React.useState(false);
 
-  // Sincroniza quando tenant.modules muda (após salvar ou recarregar)
-  React.useEffect(() => {
-    const mods = parseMods(tenant?.modules);
-    if(mods) setActiveMods(mods);
-  }, [tenant?.modules]);
-
-  // Sincroniza config quando tenant.config muda
+  // Sincroniza config quando tenant.config muda (após salvar)
   React.useEffect(() => {
     const c = parseCfg(tenant?.config);
-    setPerms(c.permissions || {});
+    setNavPerms(getInitialNavPerms(c));
     setQuota(c.quota || 100);
+    setDirty(false);
   }, [tenant?.config]);
 
-  const toggleProductMod = (modId) => {
-    setActiveMods(prev => {
-      const has = prev.includes(modId);
-      const next = has ? prev.filter(m=>m!==modId) : [...prev, modId];
-      return next.length > 0 ? next : prev; // garante pelo menos 1
+  const toggle = (id) => {
+    if(NAV_REQUIRED.includes(id)) return; // não pode desabilitar obrigatório
+    setNavPerms(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
+    setDirty(true);
+  };
+
+  const toggleGroup = (groupItems) => {
+    const ids = groupItems.map(i=>i.id).filter(id=>!NAV_REQUIRED.includes(id));
+    const allOn = ids.every(id=>navPerms.includes(id));
+    setNavPerms(prev => {
+      let next = [...prev];
+      if(allOn) { next = next.filter(x=>!ids.includes(x)); }
+      else { ids.forEach(id=>{ if(!next.includes(id)) next.push(id); }); }
+      return next;
     });
     setDirty(true);
-    setModsChanged(true);
-  };
-
-  const toggleMod = (modId) => {
-    const enabled = !!perms[modId];
-    const newPerms = {...perms};
-    if(enabled) { delete newPerms[modId]; }
-    else { newPerms[modId] = { items: getAllModPerms(modId) }; }
-    setPerms(newPerms); setDirty(true);
-  };
-
-  const toggleItem = (modId, itemKey) => {
-    const cur = perms[modId]?.items || [];
-    const newItems = cur.includes(itemKey) ? cur.filter(x=>x!==itemKey) : [...cur, itemKey];
-    const newPerms = {...perms, [modId]: {...(perms[modId]||{}), items: newItems}};
-    setPerms(newPerms); setDirty(true);
   };
 
   const save = () => {
-    const newCfg = {...cfg, permissions: perms, quota};
-    // Sempre passa activeMods — o useEffect garante que está sincronizado com o tenant real
+    // Garante dashboard sempre incluso
+    const finalPerms = navPerms.includes("dashboard") ? navPerms : ["dashboard",...navPerms];
+    // Deriva activeMods (para campo modules do tenant) a partir dos itens de Módulos habilitados
+    const moduloIds = ["prospeccao","receptivo","pos_venda","reativacao","suporte","cadencia"];
+    const activeMods = moduloIds.filter(id=>finalPerms.includes(id));
     const finalMods = activeMods.length > 0 ? activeMods : ["prospeccao"];
-    onSave(newCfg, finalMods); setDirty(false); setModsChanged(false);
+    const newCfg = {...cfg, nav_perms: finalPerms, quota};
+    onSave(newCfg, finalMods);
+    setDirty(false);
   };
 
   return (
     <div style={{marginTop:12}}>
-      <div style={{fontSize:10,color:C.faint,fontWeight:700,marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>Módulos Contratados</div>
-      {/* Toggles de produto */}
-      <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
-        {PRODUCT_MODS_DEF.map(m=>{
-          const on = activeMods.includes(m.id);
-          return (
-            <div key={m.id} onClick={()=>toggleProductMod(m.id)}
-              title={m.desc}
-              style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:8,cursor:"pointer",border:"1px solid "+(on?C.accent:C.border),background:on?(C.accent+"15"):"transparent",transition:"all 0.15s"}}>
-              <div style={{width:28,height:16,borderRadius:8,background:on?C.accent:C.border,position:"relative",flexShrink:0,transition:"background 0.2s"}}>
-                <div style={{position:"absolute",top:2,left:on?12:2,width:12,height:12,borderRadius:6,background:"#fff",transition:"left 0.2s"}}/>
-              </div>
-              <span style={{fontSize:12,fontWeight:on?700:400,color:on?C.text:C.muted}}>{m.label}</span>
-            </div>
-          );
-        })}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <div style={{fontSize:10,color:C.faint,fontWeight:700,textTransform:"uppercase",letterSpacing:1}}>
+          Menu visível para esta empresa
+        </div>
+        <div style={{fontSize:11,color:C.faint}}>
+          {navPerms.length}/{ALL_NAV_IDS.length} itens ativos
+        </div>
       </div>
-      <div style={{fontSize:10,color:C.faint,fontWeight:700,marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>Permissões Granulares</div>
-      {/* Quota */}
+
+      {/* Cota de buscas */}
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,padding:"8px 12px",background:"rgba(0,180,216,0.06)",borderRadius:8,border:"1px solid rgba(0,180,216,0.15)"}}>
         <span style={{fontSize:12,color:C.muted,fontWeight:600}}>🔍 Cota mensal de buscas:</span>
         <input type="number" min={0} max={9999} value={quota} onChange={e=>{setQuota(Number(e.target.value));setDirty(true);}}
           style={{width:80,padding:"4px 8px",background:C.sidebar,border:"1px solid "+C.border,borderRadius:6,color:C.text,fontSize:12,fontWeight:700,textAlign:"center"}}/>
         <span style={{fontSize:11,color:C.faint}}>leads/mês</span>
       </div>
-      {/* Modules */}
-      {Object.entries(PERMISSIONS_SCHEMA).map(([modId, modDef])=>{
-        const modEnabled = !!perms[modId];
-        const isOpen = expanded[modId];
-        const items = modDef.items;
-        const enabledItems = perms[modId]?.items || [];
+
+      {/* Grupos do menu */}
+      {NAV_MENU_DEF.map(group=>{
+        const groupIds = group.items.map(i=>i.id).filter(id=>!NAV_REQUIRED.includes(id));
+        const allOn = groupIds.every(id=>navPerms.includes(id));
+        const someOn = groupIds.some(id=>navPerms.includes(id));
         return (
-          <div key={modId} style={{marginBottom:6,border:"1px solid "+(modEnabled?C.accent:C.border),borderRadius:8,overflow:"hidden",transition:"all 0.15s"}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:modEnabled?"rgba(0,180,216,0.06)":"transparent",cursor:"pointer"}}
-              onClick={()=>setExpanded(e=>({...e,[modId]:!isOpen}))}>
-              {/* Toggle on/off */}
-              <div onClick={e=>{e.stopPropagation();toggleMod(modId);}} style={{width:32,height:18,borderRadius:9,background:modEnabled?C.accent:C.border,position:"relative",cursor:"pointer",flexShrink:0,transition:"background 0.2s"}}>
-                <div style={{position:"absolute",top:2,left:modEnabled?14:2,width:14,height:14,borderRadius:7,background:"#fff",transition:"left 0.2s"}}/>
+          <div key={group.group} style={{marginBottom:10,border:"1px solid "+C.border,borderRadius:10,overflow:"hidden"}}>
+            {/* Header do grupo com toggle-all */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",background:C.sidebar,cursor:"pointer"}}
+              onClick={()=>toggleGroup(group.items)}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:15}}>{group.icon}</span>
+                <span style={{fontSize:12,fontWeight:700,color:C.text}}>{group.group}</span>
+                <span style={{fontSize:10,color:C.faint}}>
+                  ({group.items.filter(i=>navPerms.includes(i.id)).length}/{group.items.length})
+                </span>
               </div>
-              <span style={{fontSize:12,fontWeight:700,color:modEnabled?C.text:C.muted,flex:1}}>{modDef.label}</span>
-              {modEnabled&&<span style={{fontSize:10,color:C.faint}}>{enabledItems.length}/{Object.keys(items).length} itens</span>}
-              <span style={{fontSize:10,color:C.faint}}>{isOpen?"▲":"▼"}</span>
+              {/* Toggle all do grupo */}
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:10,color:C.faint}}>{allOn?"Desativar tudo":"Ativar tudo"}</span>
+                <div style={{width:32,height:18,borderRadius:9,background:allOn?C.accent:someOn?"#F59E0B":C.border,position:"relative",transition:"background 0.2s"}}>
+                  <div style={{position:"absolute",top:2,left:allOn?14:2,width:14,height:14,borderRadius:7,background:"#fff",transition:"left 0.2s"}}/>
+                </div>
+              </div>
             </div>
-            {isOpen && modEnabled && (
-              <div style={{padding:"8px 12px 10px",background:C.sidebar,display:"flex",flexWrap:"wrap",gap:6}}>
-                {Object.entries(items).map(([itemKey, itemDef])=>{
-                  const on = enabledItems.includes(itemKey);
-                  return (
-                    <div key={itemKey} onClick={()=>toggleItem(modId,itemKey)}
-                      style={{padding:"4px 10px",borderRadius:20,cursor:"pointer",fontSize:11,border:"1px solid "+(on?C.accent:C.border),background:on?C.accent+"22":"transparent",color:on?C.accent:C.muted,fontWeight:on?700:400,transition:"all 0.15s"}}>
-                      {on?"✓ ":""}{itemDef.label}
+            {/* Itens do grupo */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:1,background:C.border}}>
+              {group.items.map(item=>{
+                const on = navPerms.includes(item.id);
+                const required = NAV_REQUIRED.includes(item.id);
+                return (
+                  <div key={item.id}
+                    onClick={()=>!required&&toggle(item.id)}
+                    style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 14px",background:on?(C.accent+"0D"):C.card,cursor:required?"default":"pointer",opacity:required?0.6:1,transition:"background 0.15s"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      {required&&<span style={{fontSize:9,color:C.faint,background:C.border,padding:"1px 5px",borderRadius:10}}>fixo</span>}
+                      <span style={{fontSize:12,color:on?C.text:C.muted,fontWeight:on?600:400}}>{item.label}</span>
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                    <div style={{width:28,height:16,borderRadius:8,background:on?C.accent:C.border,position:"relative",flexShrink:0,transition:"background 0.2s"}}>
+                      <div style={{position:"absolute",top:2,left:on?12:2,width:12,height:12,borderRadius:6,background:"#fff",transition:"left 0.2s"}}/>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         );
       })}
-      <button onClick={save} style={{marginTop:10,width:"100%",padding:"9px",background:dirty?"linear-gradient(135deg,"+C.accent+","+C.accent2+")":"rgba(0,180,216,0.12)",color:dirty?"#fff":C.muted,border:"1px solid "+(dirty?C.accent:C.border),borderRadius:8,fontWeight:800,fontSize:13,cursor:"pointer",transition:"all 0.2s"}}>
-        {dirty?"💾 Salvar Módulos e Permissões":"✅ Salvo — clique para re-salvar"}
+
+      <button onClick={save} style={{marginTop:4,width:"100%",padding:"10px",background:dirty?"linear-gradient(135deg,"+C.accent+","+C.accent2+")":"rgba(0,180,216,0.10)",color:dirty?"#fff":C.muted,border:"1px solid "+(dirty?C.accent:C.border),borderRadius:8,fontWeight:800,fontSize:13,cursor:"pointer",transition:"all 0.2s"}}>
+        {dirty?"💾 Salvar Menu da Empresa":"✅ Salvo — clique para re-salvar"}
       </button>
     </div>
   );
 }
 
-function SuperAdminPanel({ currentUser, onViewAsTenant }) {
+function SuperAdminPanel({ currentUser, onViewAsTenant, onModulesUpdated }) {
   const [tab, setTab]           = useState("tenants");
   const [tenants, setTenants]   = useState([]);
   const [loading, setLoading]   = useState(true);
@@ -7890,7 +7918,7 @@ function SuperAdminPanel({ currentUser, onViewAsTenant }) {
                     </div>
                   </div>
                   <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                    <button onClick={()=>{ const mods = (() => { let m=t.modules; if(Array.isArray(m)&&m.length>0) return m; if(typeof m==="string"&&m.trim().startsWith("[")){ try{const p=JSON.parse(m);if(p.length>0)return p;}catch(e){} } return ["prospeccao"]; })(); onViewAsTenant&&onViewAsTenant({id:t.id,name:t.name,modules:mods}); }}
+                    <button onClick={()=>{ const mods = (() => { let m=t.modules; if(Array.isArray(m)&&m.length>0) return m; if(typeof m==="string"&&m.trim().startsWith("[")){ try{const p=JSON.parse(m);if(p.length>0)return p;}catch(e){} } return ["prospeccao"]; })(); onViewAsTenant&&onViewAsTenant({id:t.id,name:t.name,modules:mods,config:t.config}); }}
                       style={{display:"inline-flex",alignItems:"center",gap:5,padding:"5px 12px",borderRadius:8,border:"1px solid rgba(251,191,36,0.4)",background:"rgba(251,191,36,0.08)",color:"#FBBF24",fontSize:11,fontWeight:700,cursor:"pointer"}}>
                       👁 Visualizar
                     </button>
@@ -7913,6 +7941,7 @@ function SuperAdminPanel({ currentUser, onViewAsTenant }) {
                     await adm("tenants?id=eq."+t.id, "PATCH", patch);
                     // Atualiza state local com array (não string) para o useEffect do ModulosConfig detectar
                     setTenants(ts=>ts.map(x=>x.id===t.id?{...x,config:newCfg,modules:activeMods}:x));
+                    onModulesUpdated && onModulesUpdated(t.id, activeMods, newCfg);
                     setSaved("✅ Módulos e permissões salvos!");
                     setTimeout(()=>setSaved(""),3000);
                   } catch(e){ setError("Erro ao salvar: "+e.message); }
@@ -8010,6 +8039,8 @@ export default function App() {
   const [ownerWebhooks,setOwnerWebhooks]=useState({busca_leads:"",pos_resposta:""});
   // Módulos ativos do tenant (React state para forçar re-render do nav quando mudarem)
   const [tenantModules, setTenantModules] = useState(TENANT_CONFIG.modules||["prospeccao"]);
+  // nav_perms do tenant (React state para forçar re-render quando owner altera menu da empresa)
+  const [tenantNavPermsState, setTenantNavPermsState] = useState(TENANT_CONFIG.nav_perms||null);
   // Owner: visualizar nav como uma empresa cliente (preview mode)
   const [viewAsTenant, setViewAsTenant] = useState(null); // {id, name, modules[]}
 
@@ -8045,9 +8076,10 @@ export default function App() {
             if(t&&t[0]){
               // Aplica TODA config do tenant (cores, módulos, webhooks, etc.)
               applyTenantConfig(t[0]);
-              // Atualiza state React para re-render do nav
+              // Atualiza states React para re-render do nav
               if(TENANT_CONFIG.modules) setTenantModules([...TENANT_CONFIG.modules]);
               const cfg=typeof t[0].config==="string"?JSON.parse(t[0].config||"{}"):t[0].config||{};
+              if(cfg.nav_perms) setTenantNavPermsState(cfg.nav_perms);
               if(cfg.webhooks) setOwnerWebhooks(w=>({...w,...cfg.webhooks}));
             }
           } catch(e){ console.warn(e); }
@@ -8077,6 +8109,38 @@ export default function App() {
     };
     loadFromSB();
   },[]);
+  // Polling: sincroniza módulos do tenant em tempo real (a cada 30s)
+  // Garante que mudanças feitas pelo owner no SuperAdmin reflitam sem relogar
+  useEffect(()=>{
+    if(!user?.tenant_id) return;
+    const fetchMods = async () => {
+      try {
+        const t = await sbFetch("tenants?id=eq."+user.tenant_id+"&select=modules,config");
+        if(t && t[0]) {
+          applyTenantConfig(t[0]);
+          if(TENANT_CONFIG.modules && TENANT_CONFIG.modules.length > 0) {
+            setTenantModules(prev => {
+              const next = [...TENANT_CONFIG.modules];
+              if(JSON.stringify(prev) !== JSON.stringify(next)) return next;
+              return prev;
+            });
+          }
+          // Atualiza nav_perms se mudou (para re-render do nav)
+          const cfg = t[0].config ? (typeof t[0].config==="string" ? (() => { try { return JSON.parse(t[0].config); } catch(e) { return {}; } })() : t[0].config) : {};
+          if(cfg.nav_perms) {
+            setTenantNavPermsState(prev => {
+              if(JSON.stringify(prev) !== JSON.stringify(cfg.nav_perms)) return cfg.nav_perms;
+              return prev;
+            });
+          }
+        }
+      } catch(e) { /* silencioso */ }
+    };
+    fetchMods(); // imediato na primeira vez
+    const interval = setInterval(fetchMods, 30000); // a cada 30s
+    return () => clearInterval(interval);
+  },[user?.tenant_id]);
+
   // Check pending cadence steps daily and notify via N8N
   useEffect(()=>{
     if(!leads.length) return;
@@ -8237,20 +8301,28 @@ export default function App() {
     ...(isMaster?[{id:"master",label:"Controle de Acesso",icon:"shield",group:"Gestão",master:true}]:[]),
     ...(isOwner?[{id:"super_admin",label:"Super Admin",icon:"settings",group:"Administração",owner:true}]:[]),
   ];
-  // Módulos contratados pelo tenant (React state — atualizado após login e boot)
-  const tenantMods = Array.isArray(tenantModules) && tenantModules.length > 0 ? tenantModules : ["prospeccao"];
-  // Se owner está no modo "visualizar como empresa", usa os módulos daquela empresa
-  const previewMods = viewAsTenant ? (Array.isArray(viewAsTenant.modules) && viewAsTenant.modules.length > 0 ? viewAsTenant.modules : ["prospeccao"]) : null;
-  const effectiveMods = previewMods || tenantMods;
-  // Itens do grupo Módulos: só aparecem se o tenant contratou E o usuário tem acesso
-  const MOD_IDS = ["prospeccao","receptivo","pos_venda","reativacao","suporte","cadencia"];
+  // nav_perms salvo no config do tenant — lista de IDs visíveis para a empresa
+  const parseCfgNav = (c) => {
+    if(!c) return null;
+    const obj = typeof c==="string" ? (() => { try { return JSON.parse(c); } catch(e) { return {}; } })() : c;
+    return obj.nav_perms && Array.isArray(obj.nav_perms) ? obj.nav_perms : null;
+  };
+  // No modo preview: usa nav_perms da empresa sendo visualizada
+  const previewNavPerms = viewAsTenant ? parseCfgNav(viewAsTenant.config) : null;
+  // Para o tenant logado: usa state reativo (atualizado pelo polling)
+  const tenantNavPerms = tenantNavPermsState;
+
   const nav = ALL_NAV.filter(n => {
-    if(!hasAccess(n.id)) return false;
-    // No modo preview, owner vê exatamente o que a empresa vê (sem bypass)
-    if(MOD_IDS.includes(n.id) && (!isOwner || viewAsTenant) && !effectiveMods.includes(n.id)) return false;
-    // No modo preview, esconde super_admin e master do nav (simula usuário comum)
+    // Owner vê tudo exceto quando está em modo preview
+    if(isOwner && !viewAsTenant) return true;
+    // No modo preview, esconde itens de admin
     if(viewAsTenant && (n.id==="super_admin" || n.id==="master")) return false;
-    return true;
+    // Permissão do usuário (perms salvas no user)
+    if(!hasAccess(n.id)) return false;
+    // nav_perms da empresa (preview ou tenant logado)
+    const effective = previewNavPerms || tenantNavPerms;
+    if(effective) return effective.includes(n.id);
+    return true; // sem nav_perms configurado = tudo visível
   });
   const presentGroups = [...new Set(nav.map(n=>n.group))];
   const groups = ["Principal","Comunicação","Gestão","Módulos","Master","Owner","Administração"].filter(g=>presentGroups.includes(g));
@@ -8272,7 +8344,10 @@ export default function App() {
     if(pg==="suporte")    return <Suporte leads={leads} onUpdateLead={updateLead} currentUser={user}/>;
     if(pg==="settings") return <Settings user={user}/>;
     if(pg==="master") return <MasterPanel currentUser={user}/>;
-    if(pg==="super_admin") return <SuperAdminPanel currentUser={user} onViewAsTenant={(t)=>{ setViewAsTenant(t); setPage("dashboard"); }}/>;
+    if(pg==="super_admin") return <SuperAdminPanel currentUser={user}
+      onViewAsTenant={(t)=>{ setViewAsTenant(t); setPage("dashboard"); }}
+      onModulesUpdated={(tenantId, mods, cfg)=>{ setViewAsTenant(v=> v?.id===tenantId ? {...v,modules:mods,config:cfg} : v); }}
+    />;
     return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} users={DB.all()||[]} currentUser={user} isMaster={isMaster}/>;
   };
 
