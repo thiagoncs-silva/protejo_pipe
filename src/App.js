@@ -4996,20 +4996,27 @@ function OwnerPanel({ webhook, onWebhookChange }) {
   };
 
   // ── Permissions for selected user ────────────────────────────────────────
-  const togglePerm = (uid, mod) => {
+  const togglePerm = async (uid, mod) => {
     const u = DB.findById(uid);
     if(!u || u.role==="owner") return;
-    const cur = u.perms || DEFAULT_USER_PERMS;
+    const cur = Array.isArray(u.perms) && u.perms.length > 0 ? u.perms : DEFAULT_USER_PERMS;
     const next = cur.includes(mod) ? cur.filter(m=>m!==mod) : [...cur, mod];
     DB.setPerms(uid, next);
+    // Persiste no Supabase
+    try { await sbAuth.updateUser(uid, { perms: JSON.stringify(next) }); }
+    catch(e) { console.warn("togglePerm save error:", e.message); }
     refresh();
     setSelUser({ ...DB.findById(uid) });
   };
 
-  const setAllPerms = (uid, enable) => {
+  const setAllPerms = async (uid, enable) => {
     const u = DB.findById(uid);
     if(!u || u.role==="owner") return;
-    DB.setPerms(uid, enable ? [...ALL_MODULES] : ["dashboard"]);
+    const next = enable ? [...ALL_MODULES] : ["dashboard"];
+    DB.setPerms(uid, next);
+    // Persiste no Supabase
+    try { await sbAuth.updateUser(uid, { perms: JSON.stringify(next) }); }
+    catch(e) { console.warn("setAllPerms save error:", e.message); }
     refresh();
     setSelUser({ ...DB.findById(uid) });
     notify(enable ? "Todos os módulos habilitados." : "Acesso restrito ao Dashboard.");
@@ -5290,6 +5297,8 @@ function MasterPanel({ currentUser }) {
   const [busy,setBusy]=useState(false);
   const [loadingTenants,setLoadingTenants]=useState(false);
   const [confirmId,setConfirmId]=useState(null);
+  const [permUser,setPermUser]=useState(null);  // user being edited in permission panel
+  const [permBusy,setPermBusy]=useState(false);
 
   // Se owner, carrega lista de empresas para seletor
   useEffect(()=>{
@@ -5346,6 +5355,7 @@ function MasterPanel({ currentUser }) {
         role: form.role,
         tenant_id: tenantId,
         status: "ativo",
+        perms: JSON.stringify(DEFAULT_USER_PERMS),
       });
       setOk(`Usuário ${form.name} cadastrado!`);
       setForm({name:"",email:"",password:"",role:"user"});
@@ -5358,6 +5368,41 @@ function MasterPanel({ currentUser }) {
     } finally {
       setBusy(false);
     }
+  };
+
+  // Abre painel de permissões para um usuário
+  const openPerms = async (u) => {
+    // Garante que temos as perms mais recentes
+    setPermUser({...u});
+  };
+
+  const toggleUserPerm = async (mod) => {
+    if(!permUser) return;
+    let cur = permUser.perms;
+    if(typeof cur==="string"){ try{ cur=JSON.parse(cur); }catch(e){ cur=null; } }
+    if(!Array.isArray(cur)||cur.length===0) cur=[...DEFAULT_USER_PERMS];
+    const next = cur.includes(mod) ? cur.filter(m=>m!==mod) : [...cur, mod];
+    const updated = {...permUser, perms: next};
+    setPermUser(updated);
+    setUsers(us=>us.map(u=>u.id===permUser.id?{...u,perms:next}:u));
+    setPermBusy(true);
+    try { await sbAuth.updateUser(permUser.id, { perms: JSON.stringify(next) }); }
+    catch(e) { console.warn("toggleUserPerm:", e.message); }
+    setPermBusy(false);
+  };
+
+  const setAllUserPerms = async (enable) => {
+    if(!permUser) return;
+    const next = enable ? [...DEFAULT_USER_PERMS] : ["dashboard"];
+    const updated = {...permUser, perms: next};
+    setPermUser(updated);
+    setUsers(us=>us.map(u=>u.id===permUser.id?{...u,perms:next}:u));
+    setPermBusy(true);
+    try { await sbAuth.updateUser(permUser.id, { perms: JSON.stringify(next) }); }
+    catch(e) { console.warn("setAllUserPerms:", e.message); }
+    setPermBusy(false);
+    setOk(enable?"Todos os acessos habilitados.":"Acesso restrito ao Dashboard.");
+    setTimeout(()=>setOk(""),3000);
   };
 
   const stats={total:users.length,ativos:users.filter(u=>u.status==="ativo").length,cancelados:users.filter(u=>u.status==="cancelado").length,admins:users.filter(u=>u.role==="admin").length};
@@ -5376,6 +5421,56 @@ function MasterPanel({ currentUser }) {
             <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
               <button style={btnG} onClick={()=>setConfirmId(null)}>Não, voltar</button>
               <button style={{...btnD,padding:"9px 18px",fontSize:13,fontWeight:700}} onClick={()=>cancelUser(confirmId)}>Sim, cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Permission editing modal */}
+      {permUser&&(
+        <div style={{position:"fixed",inset:0,zIndex:750,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(6,14,28,0.92)",backdropFilter:"blur(6px)"}} onClick={()=>setPermUser(null)}>
+          <div style={{background:C.panel,border:("1px solid "+gold+"44"),borderRadius:16,padding:24,width:480,maxHeight:"80vh",overflowY:"auto",boxShadow:"0 24px 64px rgba(0,0,0,0.7)"}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+              <div>
+                <div style={{fontSize:15,fontWeight:800,color:C.text}}>🔐 Permissões — {permUser.name}</div>
+                <div style={{fontSize:11,color:C.muted,marginTop:2}}>{permUser.email}</div>
+              </div>
+              <button onClick={()=>setPermUser(null)} style={{background:"transparent",border:"none",color:C.muted,fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
+            </div>
+            <div style={{display:"flex",gap:8,marginBottom:16}}>
+              <button onClick={()=>setAllUserPerms(true)} style={{...btnP,fontSize:12,padding:"7px 14px"}}>✅ Habilitar tudo</button>
+              <button onClick={()=>setAllUserPerms(false)} style={{...btnD,fontSize:12,padding:"7px 14px"}}>❌ Revogar tudo</button>
+              {permBusy&&<div style={{fontSize:11,color:C.muted,alignSelf:"center"}}>Salvando…</div>}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              {[
+                {id:"dashboard",label:"📊 Dashboard"},
+                {id:"search",label:"🔍 Buscar Leads"},
+                {id:"addlead",label:"➕ Cadastrar Empresa"},
+                {id:"messages",label:"💬 Mensagens"},
+                {id:"whatsapp",label:"📱 WhatsApp"},
+                {id:"crm",label:"👥 Acompanhamento"},
+                {id:"funil",label:"🔽 Funil de Vendas"},
+                {id:"metas",label:"🎯 Metas"},
+                {id:"cadencia",label:"📅 Cadências"},
+                {id:"settings",label:"⚙️ Configurações"},
+                {id:"profile",label:"🏢 Perfil da Empresa"},
+              ].map(({id,label})=>{
+                let cur = permUser.perms;
+                if(typeof cur==="string"){ try{ cur=JSON.parse(cur); }catch(e){ cur=null; } }
+                if(!Array.isArray(cur)||cur.length===0) cur=[...DEFAULT_USER_PERMS];
+                const enabled = cur.includes(id);
+                const isFixed = id==="dashboard";
+                return (
+                  <div key={id} onClick={()=>!isFixed&&toggleUserPerm(id)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:10,border:("1px solid "+(enabled?gold+"44":C.border)),background:enabled?(gold+"0D"):"transparent",cursor:isFixed?"default":"pointer",transition:"all 0.15s"}}>
+                    <div style={{width:18,height:18,borderRadius:5,border:("2px solid "+(enabled?gold:C.border)),background:enabled?gold:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.15s"}}>
+                      {enabled&&<div style={{fontSize:11,color:"#000",fontWeight:900}}>✓</div>}
+                    </div>
+                    <div style={{fontSize:12,fontWeight:enabled?700:400,color:enabled?C.text:C.muted}}>{label}</div>
+                    {isFixed&&<div style={{fontSize:9,color:C.faint,marginLeft:"auto"}}>Fixo</div>}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -5480,6 +5575,7 @@ function MasterPanel({ currentUser }) {
                           ? <span style={{fontSize:11,color:C.faint,fontStyle:"italic"}}>Protegido</span>
                           : <div style={{display:"flex",gap:6}}>
                               <button onClick={()=>resetPwd(u.id)} style={{...btnG,padding:"5px 10px",fontSize:11}}>🔑 Reset</button>
+                              {u.role!=="owner"&&<button onClick={()=>openPerms(u)} style={{display:"inline-flex",alignItems:"center",gap:4,padding:"5px 10px",borderRadius:8,border:"1px solid "+gold+"44",background:gold+"10",color:gold,fontSize:11,fontWeight:600,cursor:"pointer"}}>🔐 Perms</button>}
                               {u.status==="ativo"
                                 ? <button onClick={()=>setConfirmId(u.id)} style={{...btnD,padding:"5px 10px",fontSize:11}}>✕ Cancelar</button>
                                 : <button onClick={()=>reactivate(u.id)} style={{display:"inline-flex",alignItems:"center",gap:5,padding:"5px 12px",borderRadius:8,border:"1px solid #4ADE8033",background:"rgba(74,222,128,0.1)",color:"#4ADE80",fontSize:11,fontWeight:600,cursor:"pointer"}}>✓ Reativar</button>
@@ -7473,9 +7569,14 @@ const PRODUCT_MODS_DEF = [
 function ModulosConfig({ tenant, onSave }) {
   const cfg = typeof tenant?.config==="string" ? JSON.parse(tenant.config||"{}") : (tenant?.config||{});
   // Módulos de produto ativos (coluna modules do tenant)
-  const tenantMods = Array.isArray(tenant?.modules) ? tenant.modules
-    : (typeof tenant?.modules==="string" ? JSON.parse(tenant?.modules||"[]") : ["prospeccao"]);
-  const [activeMods, setActiveMods] = React.useState(tenantMods);
+  const parseMods = (m) => {
+    if(Array.isArray(m) && m.length > 0) return m;
+    if(typeof m==="string" && m.startsWith("[")) { try { const p=JSON.parse(m); if(p.length>0) return p; } catch(e){} }
+    return null; // null = desconhecido (não sobrescreve)
+  };
+  const originalMods = parseMods(tenant?.modules);
+  const [activeMods, setActiveMods] = React.useState(originalMods || ["prospeccao"]);
+  const [modsChanged, setModsChanged] = React.useState(false); // só salva modules se o usuário mexeu
   const [perms, setPerms] = React.useState(cfg.permissions || {});
   const [quota, setQuota] = React.useState(cfg.quota || 100);
   const [expanded, setExpanded] = React.useState({});
@@ -7485,10 +7586,10 @@ function ModulosConfig({ tenant, onSave }) {
     setActiveMods(prev => {
       const has = prev.includes(modId);
       const next = has ? prev.filter(m=>m!==modId) : [...prev, modId];
-      // Garante mínimo de 1 módulo
       return next.length > 0 ? next : prev;
     });
     setDirty(true);
+    setModsChanged(true); // usuário tocou nos módulos
   };
 
   const toggleMod = (modId) => {
@@ -7508,8 +7609,9 @@ function ModulosConfig({ tenant, onSave }) {
 
   const save = () => {
     const newCfg = {...cfg, permissions: perms, quota};
-    const finalMods = activeMods.length > 0 ? activeMods : ["prospeccao"];
-    onSave(newCfg, finalMods); setDirty(false);
+    // Só passa módulos se o usuário mexeu nos toggles — evita sobrescrever com valor padrão
+    const finalMods = modsChanged ? (activeMods.length > 0 ? activeMods : ["prospeccao"]) : null;
+    onSave(newCfg, finalMods); setDirty(false); setModsChanged(false);
   };
 
   return (
@@ -7764,10 +7866,13 @@ function SuperAdminPanel({ currentUser }) {
                 <ModulosConfig tenant={t} onSave={async(newCfg, activeMods)=>{
                   try {
                     const patch = {config: JSON.stringify(newCfg)};
+                    // Só atualiza modules se o usuário mexeu nos toggles de produto (activeMods != null)
                     if(Array.isArray(activeMods)) patch.modules = JSON.stringify(activeMods);
                     await adm("tenants?id=eq."+t.id, "PATCH", patch);
-                    setTenants(ts=>ts.map(x=>x.id===t.id?{...x,config:newCfg,modules:activeMods||x.modules}:x));
-                    setSaved("Permissões e módulos salvos!");setTimeout(()=>setSaved(""),2500);
+                    const newMods = Array.isArray(activeMods) ? activeMods : t.modules;
+                    setTenants(ts=>ts.map(x=>x.id===t.id?{...x,config:newCfg,modules:newMods}:x));
+                    setSaved(Array.isArray(activeMods)?"Permissões e módulos salvos!":"Permissões salvas!");
+                    setTimeout(()=>setSaved(""),2500);
                   } catch(e){ setError(e.message); }
                 }}/>
 
@@ -7971,15 +8076,15 @@ export default function App() {
     if(mod==="pos_venda") return false;
 
     // Usuário comum: lê permissões do objeto Supabase diretamente
-    // user.perms pode ser array (coluna jsonb), ou string JSON
+    // user.perms pode ser array (coluna jsonb), string JSON, ou null/vazio
     let perms = user.perms;
     if(typeof perms==="string"){ try{ perms=JSON.parse(perms); }catch(e){ perms=null; } }
-    // Fallback: tenta USER_DB local (modo offline)
-    if(!Array.isArray(perms)){
+    // Fallback se null, undefined, ou array vazio
+    if(!Array.isArray(perms) || perms.length === 0){
       const local = DB.findById(user.id);
-      perms = local?.perms || DEFAULT_USER_PERMS;
+      perms = (local?.perms?.length > 0) ? local.perms : DEFAULT_USER_PERMS;
     }
-    return Array.isArray(perms) ? perms.includes(mod) : DEFAULT_USER_PERMS.includes(mod);
+    return perms.includes(mod);
   };
 
   // Responsive hooks - before any conditional return (React rules)
