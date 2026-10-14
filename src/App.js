@@ -8078,8 +8078,9 @@ export default function App() {
     {id:"reativacao",  label:"Reativação",          icon:"refresh",   group:"Módulos"},
     {id:"suporte",     label:"Suporte",              icon:"headset",   group:"Módulos"},
     {id:"settings", label:"Configurações",    icon:"settings",  group:"Gestão"},
-    ...((isMaster||isAdmin)?[{id:"master",label:"Controle de Acesso",icon:"shield",group:"Gestão",master:true}]:[]),
-    ...(isOwner?[{id:"super_admin",label:"Super Admin",icon:"settings",group:"Administração",owner:true}]:[]),
+    // Itens de controle — sempre visíveis por role, NUNCA filtrados por nav_perms
+    ...(isOwner||isMaster||isAdmin?[{id:"master",label:"Controle de Acesso",icon:"shield",group:"Controle",master:true}]:[]),
+    ...(isOwner?[{id:"super_admin",label:"Super Admin",icon:"settings",group:"Controle",owner:true}]:[]),
   ];
   // nav_perms salvo no config do tenant — lista de IDs visíveis para a empresa
   const parseCfgNav = (c) => {
@@ -8092,21 +8093,14 @@ export default function App() {
   // Para o tenant logado: usa state reativo (atualizado pelo polling)
   const tenantNavPerms = tenantNavPermsState;
 
-  // Itens administrativos — controlados APENAS por role, nunca por nav_perms
-  const ADMIN_NAV_IDS = new Set(["master","super_admin"]);
+  // Itens do grupo Controle nunca são filtrados por nav_perms — só por role
+  // (já entram no ALL_NAV condicionalmente pelo role correto)
+  const CONTROL_IDS = new Set(["master","super_admin"]);
   const nav = ALL_NAV.filter(n => {
-    // Owner vê tudo exceto quando está em modo preview
+    // Itens de controle: já foram filtrados por role no ALL_NAV — apenas esconde em modo preview
+    if(CONTROL_IDS.has(n.id)) return !viewAsTenant;
+    // Owner fora do preview vê tudo
     if(isOwner && !viewAsTenant) return true;
-    // No modo preview, esconde itens de admin (simula usuário comum)
-    if(viewAsTenant && ADMIN_NAV_IDS.has(n.id)) return false;
-    // Itens admin (master, super_admin): controlados SOMENTE por role — nav_perms nunca bloqueia
-    // master → visível para role "master", "owner", "admin"
-    // super_admin → visível apenas para role "owner"
-    if(ADMIN_NAV_IDS.has(n.id)) {
-      if(n.id==="super_admin") return isOwner;
-      if(n.id==="master") return isMaster || isAdmin;
-      return false;
-    }
     // Permissão do usuário (role-based) para itens comuns
     if(!hasAccess(n.id)) return false;
     // nav_perms da empresa (preview ou tenant logado)
@@ -8115,7 +8109,7 @@ export default function App() {
     return true; // sem nav_perms configurado = tudo visível
   });
   const presentGroups = [...new Set(nav.map(n=>n.group))];
-  const groups = ["Principal","Comunicação","Gestão","Módulos","Master","Owner","Administração"].filter(g=>presentGroups.includes(g));
+  const groups = ["Principal","Comunicação","Gestão","Módulos","Controle","Master","Owner","Administração"].filter(g=>presentGroups.includes(g));
   const renderPage = (pg) => {
     if(pg==="dashboard") return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} users={DB.all()} currentUser={user} isMaster={isMaster}/>;
     if(pg==="profile") return <CompanyProfile profile={profile} tenantId={user?.tenant_id} onSave={p=>{setProfile(p);notify("Perfil salvo!");}} />;
@@ -8236,6 +8230,7 @@ export default function App() {
             <div key={g}>
               {open&&<div style={{fontSize:9,color:C.faint,letterSpacing:1.5,textTransform:"uppercase",fontWeight:700,padding:"10px 12px 5px"}}>{g}</div>}
               {!open&&<div style={{height:8}}/>}
+              {g==="Controle"&&open&&<div style={{height:1,background:"linear-gradient(90deg,#F59E0B33,transparent)",margin:"8px 4px 4px"}}/>}
               {g==="Master"&&open&&<div style={{height:1,background:"linear-gradient(90deg,#F59E0B33,transparent)",margin:"8px 4px 4px"}}/>}
               {g==="Owner"&&open&&<div style={{height:1,background:"linear-gradient(90deg,#A855F733,transparent)",margin:"8px 4px 4px"}}/>}
               {nav.filter(n=>n.group===g).map(item=>{
