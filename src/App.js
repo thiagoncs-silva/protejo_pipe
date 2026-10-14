@@ -349,14 +349,13 @@ const pill = (s) => { const c=getStatusColor(s)||C.dim; return { display:"inline
 
 // ─── AUTH - persistent shared user store ─────────────────────────────────────
 // All available module IDs
-const ALL_MODULES = ["dashboard","profile","search","addlead","messages","whatsapp","crm","funil","metas","cadencia","receptivo","pos_venda","reativacao","suporte","settings","master","super_admin"];
+const ALL_MODULES = ["dashboard","profile","search","addlead","messages","whatsapp","crm","metas","cadencia","receptivo","pos_venda","reativacao","suporte","settings","master","super_admin"];
 const PERMISSIONS_SCHEMA = {
   dashboard:  { label:"Dashboard",          items:{ view:{label:"Ver dashboard"} } },
   profile:    { label:"Perfil da Empresa",  items:{ view:{label:"Ver perfil"}, edit:{label:"Editar perfil"} } },
   addlead:    { label:"Cadastrar Empresa",  items:{ view:{label:"Ver tela"}, create:{label:"Cadastrar"} } },
   search:     { label:"Busca de Leads",     items:{ view:{label:"Ver tela"}, search:{label:"Buscar leads"}, add_found:{label:"Adicionar lead"} }, quota:true },
   crm:        { label:"CRM",               items:{ view:{label:"Ver leads"}, edit:{label:"Editar lead"}, delete:{label:"Excluir lead"}, move:{label:"Mover no funil"}, history:{label:"Ver histórico"}, acionar:{label:"Acionar lead"} } },
-  funil:      { label:"Funil de Vendas",   items:{ view:{label:"Ver funil"}, move:{label:"Mover etapas"}, config:{label:"Configurar etapas"} } },
   messages:   { label:"Mensagens",         items:{ view:{label:"Ver mensagens"}, send:{label:"Enviar mensagem"} } },
   whatsapp:   { label:"WhatsApp",          items:{ view:{label:"Ver tela"}, send:{label:"Enviar mensagem"}, bulk:{label:"Disparar em lote"} } },
   cadencia:   { label:"Cadências",         items:{ view:{label:"Ver cadencias"}, create:{label:"Criar"}, edit:{label:"Editar"}, apply:{label:"Aplicar"}, auto:{label:"Disparar automático"} } },
@@ -378,7 +377,7 @@ const hasPermission = (user, tenantCfg, mod, action) => {
   const up = user.perms?.[mod];
   return Array.isArray(up)&&up.includes(action);
 };
-const DEFAULT_USER_PERMS = ["dashboard","profile","search","addlead","messages","whatsapp","crm","funil","metas","settings","prospeccao","receptivo","pos_venda","cadencia","reativacao","suporte"];
+const DEFAULT_USER_PERMS = ["dashboard","profile","search","addlead","messages","whatsapp","crm","metas","settings","prospeccao","receptivo","pos_venda","cadencia","reativacao","suporte"];
 const DEFAULT_MASTER_PERMS = [...ALL_MODULES]; // master sees everything including master panel
 
 
@@ -1454,7 +1453,6 @@ function LeadDetailModal({lead, onClose, onUpdate, onAcionar, onSetPage=()=>{}})
 
 {/* Footer */}
       <div style={{padding:"10px 16px",borderTop:("1px solid "+C.border),display:"flex",gap:8,justifyContent:"flex-end"}}>
-        <button onClick={()=>onSetPage("funil")} style={{...btnG,padding:"5px 12px",fontSize:11}}>Ver Funil →</button>
         <button onClick={()=>onSetPage("crm")} style={{...btnP,padding:"5px 12px",fontSize:11}}>Ver CRM →</button>
       </div>
     </div>
@@ -1617,7 +1615,6 @@ function CentralDecisao({ leads, onSetPage, onAcionar, leadStages=[] }) {
         </div>
       )}
       <div style={{padding:"10px 16px",borderTop:"1px solid "+C.border,display:"flex",gap:8,justifyContent:"flex-end"}}>
-        <button onClick={()=>onSetPage("funil")} style={{...btnG,padding:"5px 12px",fontSize:11}}>Ver Funil →</button>
         <button onClick={()=>onSetPage("crm")} style={{...btnP,padding:"5px 12px",fontSize:11}}>Ver CRM →</button>
       </div>
     </div>
@@ -2945,7 +2942,6 @@ const MODULE_META = {
   whatsapp:  { label:"Envio WhatsApp",      icon:"📱", group:"Comunicação",  desc:"Disparo via WhatsApp" },
   // ── Gestão ───────────────────────────────────────
   crm:       { label:"CRM / Acompanhamento",icon:"📋", group:"Gestão",       desc:"Gestão de leads e pipeline" },
-  funil:     { label:"Funil de Vendas",     icon:"🏆", group:"Gestão",       desc:"Kanban e acionamentos" },
   metas:     { label:"Metas",               icon:"🎯", group:"Gestão",       desc:"Metas por dia, semana e mês" },
   settings:  { label:"Configurações",       icon:"⚙️", group:"Gestão",       desc:"Preferências do usuário" },
   // ── Administração ────────────────────────────────
@@ -3627,229 +3623,6 @@ function FunnelBell({ lead, onAction }) {
   );
 }
 
-// ─── FUNIL PAGE - aba do usuário ─────────────────────────────────────────────
-// Mapeia stage do módulo nativo → id do step unificado do funil
-const MODULE_STAGE_TO_FUNIL = {
-  // Prospecção
-  "novo":             "f1",
-  "primeiro_contato": "f1",
-  "em_conversa":      "f3",
-  "agendou_reuniao":  "f4",
-  "proposta":         "f5",
-  "fechado":          "f6",
-  "perdido":          "f7",
-  // Receptivo
-  "r1":  "f1", // Novo contato
-  "r2":  "f1", // Qualificando
-  "r2b": "f3", // Em conversa
-  "r2c": "f4", // Agendou reunião
-  "r3":  "f5", // Proposta
-  "r4":  "f5", // Negociando → Proposta
-  "r5":  "f6", // Fechado
-  "r6":  "f7", // Perdido
-  // Pós-venda (status_envio normalizado)
-  "Aguardando":        "f1",
-  "Enviado":           "f2",
-  "Respondeu":         "f3",
-  "Agendou reunião":   "f4",
-  "Sem resposta":      "f7",
-};
-
-const getFunilStepId = (lead) => {
-  // Tenta via funilStage (campo salvo na leads table)
-  if(lead.funilStage && FUNIL_STAGES.find(s=>s.id===lead.funilStage)) return lead.funilStage;
-  // Mapeamento pelo stage do módulo
-  const modStage = lead.funil_stage || lead.funilStage || lead.status_envio;
-  if(modStage && MODULE_STAGE_TO_FUNIL[modStage]) return MODULE_STAGE_TO_FUNIL[modStage];
-  // Fallback pelo nome do step (compatibilidade)
-  const byName = FUNIL_STAGES.find(s=>s.name===lead.status);
-  if(byName) return byName.id;
-  return "f1";
-};
-
-const normalizaPvStatusFunil = (s) => ({
-  "Enviado":         "Enviado",
-  "Em conversa":     "Respondeu",
-  "Agendou reunião": "Agendou reunião",
-  "Sem resposta":    "Sem resposta",
-}[s] || s || "Aguardando");
-
-function FunnelPage({ leads, onUpdateLead, currentUser, isMaster }) {
-  const [tick, setTick] = useState(0);
-  const refresh = () => setTick(t=>t+1);
-  const [modTab, setModTab] = useState("prospeccao"); // prospeccao | receptivo | pos_venda
-  const [filter, setFilter] = useState("all"); // all | pending | overdue
-  const [pvData, setPvData] = useState([]);
-  const [pvLoading, setPvLoading] = useState(false);
-  const tenantId = currentUser?.tenant_id;
-
-  // Carrega pos_venda quando aba é selecionada
-  useEffect(()=>{
-    if(modTab!=="pos_venda"||!tenantId) return;
-    setPvLoading(true);
-    Promise.all([
-      sbFetch("pos_venda_agenda?select=*&tenant_id=eq."+tenantId+"&status=neq.processado&order=created_at.desc").catch(()=>[]),
-      sbFetch("pos_venda?select=*&tenant_id=eq."+tenantId+"&order=data_envio.desc").catch(()=>[]),
-    ]).then(([agenda, pv])=>{
-      const agRows = (Array.isArray(agenda)?agenda:[]).map(a=>({
-        id: a.id, name: a.empresa||a.nome||"—", empresa: a.empresa,
-        status_envio: "Aguardando", _source:"agenda",
-      }));
-      const pvRows = (Array.isArray(pv)?pv:[]).map(r=>({
-        id: r.id, name: r.empresa||r.nome||"—", empresa: r.empresa,
-        status_envio: normalizaPvStatusFunil(r.status_envio),
-      }));
-      setPvData([...agRows,...pvRows]);
-    }).finally(()=>setPvLoading(false));
-  },[modTab, tenantId]);
-
-  // Leads por módulo
-  const prospLeads = leads.filter(l=>l.module==="prospeccao"||(l.module==null&&!["receptivo","pos_venda"].includes(l.module)));
-  const recepLeads = leads.filter(l=>l.module==="receptivo");
-  const pvLeads    = pvData;
-
-  const activeLeads = modTab==="prospeccao" ? prospLeads
-                    : modTab==="receptivo"  ? recepLeads
-                    : pvLeads;
-
-  // Persiste mudança de estágio no Supabase (só para leads normais)
-  const handleMoveStage = async (lead, newFunilStage) => {
-    if(modTab==="pos_venda") return; // PV é read-only no funil
-    onUpdateLead({...lead, funilStage: newFunilStage.id, status: newFunilStage.name});
-    refresh();
-    if(tenantId) {
-      try {
-        await sbFetch("lead_stages", "POST", {
-          lead_id: lead.id,
-          stage_id: newFunilStage.id,
-          entered_at: new Date().toISOString(),
-          tenant_id: tenantId,
-          actions_done: [],
-        });
-      } catch(e) { console.error("Erro ao salvar estágio:", e); }
-    }
-  };
-
-  const allPending = activeLeads.filter(l=>getPendingActions(l).length>0);
-  const allOverdue = activeLeads.filter(l=>getPendingActions(l).some(a=>a.daysOverdue>0));
-  const displayed  = filter==="pending" ? allPending : filter==="overdue" ? allOverdue : activeLeads;
-
-  const MOD_TABS = [
-    {id:"prospeccao", label:"📞 Prospecção", count:prospLeads.length},
-    {id:"receptivo",  label:"📥 Receptivo",  count:recepLeads.length},
-    {id:"pos_venda",  label:"📤 Pós-venda",  count:pvLeads.length},
-  ];
-
-  return (
-    <div>
-      {/* Header */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:10}}>
-        <div>
-          <div style={{fontSize:18,fontWeight:800,color:C.text}}>🏆 Funil de Vendas</div>
-          <div style={{fontSize:12,color:C.muted,marginTop:2}}>Visão consolidada por módulo</div>
-        </div>
-      </div>
-
-      {/* Abas de módulo */}
-      <div style={{display:"flex",gap:6,marginBottom:16,borderBottom:("1px solid "+C.border),paddingBottom:0}}>
-        {MOD_TABS.map(t=>(
-          <button key={t.id} onClick={()=>{setModTab(t.id);setFilter("all");}}
-            style={{padding:"8px 16px",border:"none",borderBottom:modTab===t.id?("2px solid "+C.accent):"2px solid transparent",background:"transparent",color:modTab===t.id?C.accent:C.muted,fontSize:12,fontWeight:modTab===t.id?700:400,cursor:"pointer",display:"flex",alignItems:"center",gap:6,marginBottom:-1}}>
-            {t.label}
-            <span style={{fontSize:9,background:modTab===t.id?(C.accent+"22"):C.border,color:modTab===t.id?C.accent:C.faint,padding:"1px 6px",borderRadius:20,fontWeight:700}}>{t.count}</span>
-          </button>
-        ))}
-      </div>
-
-      {/* KPIs */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}} className="mob-grid-1">
-        {[
-          {label:"Leads no módulo",         val:activeLeads.length,    color:C.accent,    icon:"👥"},
-          {label:"Acionamentos pendentes",  val:allPending.length,     color:"#F59E0B",   icon:"🔔"},
-          {label:"Atrasados",               val:allOverdue.length,     color:"#EF4444",   icon:"⚠️"},
-        ].map(k=>(
-          <div key={k.label} style={{...card({padding:14}),borderLeft:("3px solid "+k.color)}}>
-            <div style={{fontSize:20,marginBottom:4}}>{k.icon}</div>
-            <div style={{fontSize:24,fontWeight:800,color:k.color}}>{k.val}</div>
-            <div style={{fontSize:11,color:C.muted}}>{k.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Filtros */}
-      <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
-        {[["all","Todos"],["pending","Com pendências"],["overdue","Atrasados"]].map(([v,l])=>(
-          <button key={v} onClick={()=>setFilter(v)}
-            style={{padding:"5px 14px",borderRadius:20,border:("1px solid "+(filter===v?C.accent:C.border)),background:filter===v?(C.accent+"18"):"transparent",color:filter===v?C.accent:C.muted,fontSize:11,fontWeight:filter===v?700:400,cursor:"pointer"}}>{l}
-          </button>
-        ))}
-      </div>
-
-      {/* Pipeline kanban — steps do funil unificado */}
-      <div style={{display:"flex",gap:10,overflowX:"auto",paddingBottom:12}}>
-        {FUNIL_STAGES.map(stage=>{
-          // Mapeia cada lead do módulo para o step do funil
-          const stageLeads = displayed.filter(l=>getFunilStepId(l)===stage.id);
-          const isPV = modTab==="pos_venda";
-          return (
-            <div key={stage.id} style={{minWidth:210,flex:"0 0 210px"}}>
-              <div style={{padding:"8px 12px",borderRadius:"8px 8px 0 0",background:(stage.color+"22"),borderBottom:("2px solid "+stage.color),marginBottom:8}}>
-                <div style={{display:"flex",alignItems:"center",gap:6,justifyContent:"space-between"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:5}}>
-                    <span style={{fontSize:14}}>{stage.icon}</span>
-                    <span style={{fontSize:11,fontWeight:700,color:stage.color}}>{stage.name}</span>
-                  </div>
-                  <span style={{fontSize:10,color:C.faint,background:C.border,padding:"1px 6px",borderRadius:20,fontWeight:700}}>{stageLeads.length}</span>
-                </div>
-                {!isPV&&<div style={{fontSize:9,color:C.faint,marginTop:2}}>⏱ Máx {stage.maxDays}d</div>}
-              </div>
-              <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                {stageLeads.map(lead=>{
-                  const ls      = getLeadStage(lead.id);
-                  const daysIn  = ls ? Math.floor((Date.now()-new Date(ls.enteredAt))/(1000*60*60*24)) : 0;
-                  const pending = getPendingActions(lead);
-                  const overdue = pending.filter(a=>a.daysOverdue>0);
-                  const warn    = !isPV && daysIn >= stage.maxDays;
-                  const borderColor = warn?"#EF4444":overdue.length>0?"#F59E0B":C.border;
-                  return (
-                    <div key={lead.id||lead.id} style={{...card({padding:10}),border:("1px solid "+borderColor)}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
-                        <div style={{fontSize:12,fontWeight:700,color:C.text,flex:1,marginRight:6,lineHeight:1.3}}>{lead.name||lead.empresa}</div>
-                        {!isPV&&<FunnelBell lead={lead} onAction={refresh}/>}
-                      </div>
-                      {lead.company&&<div style={{fontSize:11,color:C.muted,marginBottom:4}}>{lead.company}</div>}
-                      <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:isPV?0:6}}>
-                        {!isPV&&<span style={{fontSize:9,color:warn?"#F87171":C.faint,background:warn?"rgba(248,113,113,0.1)":C.border,padding:"1px 6px",borderRadius:20}}>{daysIn}d na etapa</span>}
-                        {!isPV&&pending.length>0&&<span style={{fontSize:9,color:overdue.length>0?"#F87171":"#F59E0B",background:overdue.length>0?"rgba(248,113,113,0.1)":"rgba(245,158,11,0.1)",padding:"1px 6px",borderRadius:20}}>🔔 {pending.length}</span>}
-                        {isPV&&lead.status_envio&&<span style={{fontSize:9,color:C.accent,background:C.accent+"18",padding:"1px 6px",borderRadius:20}}>{lead.status_envio}</span>}
-                      </div>
-                      {/* Move stage — só para módulos não-PV */}
-                      {!isPV&&(
-                        <select value={getFunilStepId(lead)}
-                          onChange={e=>{const ns=FUNIL_STAGES.find(s=>s.id===e.target.value);if(!ns)return;handleMoveStage(lead,ns);}}
-                          style={{width:"100%",background:C.sidebar,border:("1px solid "+C.border),borderRadius:6,color:C.text,fontSize:10,padding:"3px 6px"}}>
-                          {FUNIL_STAGES.map(s=><option key={s.id} value={s.id}>{s.icon} {s.name}</option>)}
-                        </select>
-                      )}
-                    </div>
-                  );
-                })}
-                {stageLeads.length===0&&<div style={{fontSize:11,color:C.faint,textAlign:"center",padding:"12px 0",fontStyle:"italic"}}>—</div>}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {modTab==="pos_venda"&&pvLoading&&(
-        <div style={{textAlign:"center",padding:24,color:C.muted,fontSize:13}}>⏳ Carregando pós-venda...</div>
-      )}
-      {modTab==="pos_venda"&&!pvLoading&&(
-        <div style={{fontSize:11,color:C.faint,marginTop:8,textAlign:"center"}}>📤 Pós-venda é exibido em modo leitura. Para mover etapas, acesse o módulo Pós-venda.</div>
-      )}
-    </div>
-  );
-}
 
 
 // ─── LIMITS PANEL ────────────────────────────────────────────────────────────
@@ -5118,7 +4891,7 @@ function OwnerPanel({ webhook, onWebhookChange }) {
 
       {/* Tabs */}
       <div style={{display:"flex",gap:10,marginBottom:20}}>
-        {[["users","👥 Usuários"],["perms","🔐 Permissões"],["limits","📊 Limites de Uso"],["funil","🏆 Funil de Vendas"],["metas","🎯 Metas"],["segmentos","🏷️ Segmentos"],["webhook","🔗 Webhook n8n"]].map(([t,l])=>(
+        {[["users","👥 Usuários"],["perms","🔐 Permissões"],["limits","📊 Limites de Uso"],["metas","🎯 Metas"],["segmentos","🏷️ Segmentos"],["webhook","🔗 Webhook n8n"]].map(([t,l])=>(
           <button key={t} onClick={()=>setTab(t)} style={tabBtn(t)}>{l}</button>
         ))}
       </div>
@@ -5260,7 +5033,6 @@ function OwnerPanel({ webhook, onWebhookChange }) {
       {/* ── TAB: LIMITS ──────────────────────────────────────────────────── */}
       {tab==="limits"&&(<LimitsPanel users={users} purple={purple} onRefresh={refresh}/>)}
 
-      {tab==="funil"&&(<FunnelConfig/>)}
 
       {tab==="segmentos"&&(<SegmentosConfig/>)}
 
@@ -5293,7 +5065,9 @@ function OwnerPanel({ webhook, onWebhookChange }) {
 
 // ─── MASTER ACCESS CONTROL PANEL ─────────────────────────────────────────────
 function MasterPanel({ currentUser }) {
-  const isOwner = currentUser?.role === "owner";
+  const isOwner  = currentUser?.role === "owner";
+  const isAdmin  = currentUser?.role === "admin";
+  const isMaster = currentUser?.role === "master" || isOwner;
   const [users,setUsers]=useState([]);
   const [tenants,setTenants]=useState([]);
   const [selTenantId,setSelTenantId]=useState(currentUser?.tenant_id||"");
@@ -5451,17 +5225,21 @@ function MasterPanel({ currentUser }) {
             </div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
               {[
-                {id:"dashboard",label:"📊 Dashboard"},
-                {id:"search",label:"🔍 Buscar Leads"},
-                {id:"addlead",label:"➕ Cadastrar Empresa"},
-                {id:"messages",label:"💬 Mensagens"},
-                {id:"whatsapp",label:"📱 WhatsApp"},
-                {id:"crm",label:"👥 Acompanhamento"},
-                {id:"funil",label:"🔽 Funil de Vendas"},
-                {id:"metas",label:"🎯 Metas"},
-                {id:"cadencia",label:"📅 Cadências"},
-                {id:"settings",label:"⚙️ Configurações"},
-                {id:"profile",label:"🏢 Perfil da Empresa"},
+                {id:"dashboard",  label:"📊 Dashboard"},
+                {id:"profile",    label:"🏢 Perfil da Empresa"},
+                {id:"search",     label:"🔍 Buscar Leads"},
+                {id:"addlead",    label:"➕ Cadastrar Empresa"},
+                {id:"messages",   label:"💬 Mensagens"},
+                {id:"whatsapp",   label:"📱 WhatsApp"},
+                {id:"crm",        label:"👥 Acompanhamento"},
+                {id:"metas",      label:"🎯 Metas"},
+                {id:"cadencia",   label:"📅 Cadências"},
+                {id:"settings",   label:"⚙️ Configurações"},
+                {id:"prospeccao", label:"🎯 Prospecção"},
+                {id:"receptivo",  label:"📥 Receptivo"},
+                {id:"pos_venda",  label:"🤝 Pós-venda"},
+                {id:"reativacao", label:"🔄 Reativação"},
+                {id:"suporte",    label:"🎧 Suporte"},
               ].map(({id,label})=>{
                 let cur = permUser.perms;
                 if(typeof cur==="string"){ try{ cur=JSON.parse(cur); }catch(e){ cur=null; } }
@@ -5534,7 +5312,8 @@ function MasterPanel({ currentUser }) {
             <div><label style={lbl}>Nível de Acesso</label>
               <select style={inp} value={form.role} onChange={e=>setForm(f=>({...f,role:e.target.value}))}>
                 <option value="user">👤 Usuário Padrão</option>
-                <option value="admin">★ Admin</option>
+                {(isMaster||isOwner)&&<option value="admin">★ Admin</option>}
+                {isMaster&&<option value="master">⭐ Master</option>}
               </select>
             </div>
           </div>
@@ -6201,7 +5980,7 @@ function Prospeccao({ currentUser, onAddToProsp }) {
     setLoading(true);
     try {
       const [rows, stages] = await Promise.all([
-        sbFetch("leads?select=*&module=eq.prospeccao&tenant_id=eq."+tenantId+"&order=created_at.desc"),
+        sbFetch("leads?tenant_id=eq."+tenantId+"&or=(module.eq.prospeccao,module.is.null)&select=*&order=created_at.desc"),
         sbFetch("lead_stages?select=*&tenant_id=eq."+tenantId+"&order=entered_at.desc"),
       ]);
       setLeads(Array.isArray(rows)?rows:[]);
@@ -7587,7 +7366,6 @@ const NAV_MENU_DEF = [
   ]},
   { group:"Gestão", icon:"📊", items:[
     {id:"crm",        label:"Acompanhamento"},
-    {id:"funil",      label:"Funil de Vendas"},
     {id:"metas",      label:"Metas"},
     {id:"cadencia",   label:"Cadências"},
     {id:"settings",   label:"Configurações"},
@@ -8090,7 +7868,7 @@ export default function App() {
           } catch(e){ console.warn("Perfil não carregado:", e.message); }
         }
         // pos_venda excluído — tem tabela própria (pos_venda) carregada no Dashboard
-        const rows = await sbFetch("leads?select=*&order=created_at.desc&tenant_id=eq."+user?.tenant_id+"&module=neq.pos_venda");
+        const rows = await sbFetch("leads?tenant_id=eq."+user?.tenant_id+"&module=neq.pos_venda&select=*&order=created_at.desc");
         if(rows && rows.length > 0){
           rows.forEach(r=>{ setLeadStage(r.id, r.funil_stage||firstStage); });
           setLeads(rows.map(dbToLead));
@@ -8180,6 +7958,8 @@ export default function App() {
     if(user.role==="owner") return true;
     // master acessa tudo exceto super_admin
     if(user.role==="master") return mod!=="super_admin";
+    // admin acessa tudo exceto super_admin (mesmo que master, mas sem criar master)
+    if(user.role==="admin") return mod!=="super_admin";
 
     // Usuário comum: lê permissões do objeto Supabase diretamente
     // user.perms pode ser array (coluna jsonb), string JSON, ou null/vazio
@@ -8278,6 +8058,7 @@ export default function App() {
 
   const profileComplete=!!profile.companyName;
   const isOwner  = user?.role==="owner";
+  const isAdmin  = user?.role==="admin";
   const isMaster = user?.role==="master" || isOwner;
 
   // Build nav from permissions - owner always sees all
@@ -8289,7 +8070,6 @@ export default function App() {
     {id:"messages", label:"Mensagens",        icon:"message",   group:"Comunicação"},
     {id:"whatsapp", label:"Envio WhatsApp",   icon:"whatsapp",  group:"Comunicação"},
     {id:"crm",      label:"Acompanhamento",   icon:"users",     group:"Gestão", badge:leads.filter(l=>l.status==="Novo cliente").length},
-    {id:"funil",    label:"Funil de Vendas",   icon:"filter",    group:"Gestão", badge:leads.filter(l=>getPendingActions(l).length>0).length},
     {id:"metas",    label:"Metas",              icon:"target",    group:"Gestão"},
     {id:"cadencia",  label:"Cadências",           icon:"calendar",  group:"Gestão"},
     {id:"prospeccao",  label:"Prospecção",          icon:"target",    group:"Módulos"},
@@ -8298,7 +8078,7 @@ export default function App() {
     {id:"reativacao",  label:"Reativação",          icon:"refresh",   group:"Módulos"},
     {id:"suporte",     label:"Suporte",              icon:"headset",   group:"Módulos"},
     {id:"settings", label:"Configurações",    icon:"settings",  group:"Gestão"},
-    ...(isMaster?[{id:"master",label:"Controle de Acesso",icon:"shield",group:"Gestão",master:true}]:[]),
+    ...((isMaster||isAdmin)?[{id:"master",label:"Controle de Acesso",icon:"shield",group:"Gestão",master:true}]:[]),
     ...(isOwner?[{id:"super_admin",label:"Super Admin",icon:"settings",group:"Administração",owner:true}]:[]),
   ];
   // nav_perms salvo no config do tenant — lista de IDs visíveis para a empresa
@@ -8312,13 +8092,17 @@ export default function App() {
   // Para o tenant logado: usa state reativo (atualizado pelo polling)
   const tenantNavPerms = tenantNavPermsState;
 
+  // Itens administrativos — controlados APENAS por role, nunca por nav_perms
+  const ADMIN_NAV_IDS = new Set(["master","super_admin"]);
   const nav = ALL_NAV.filter(n => {
     // Owner vê tudo exceto quando está em modo preview
     if(isOwner && !viewAsTenant) return true;
-    // No modo preview, esconde itens de admin
-    if(viewAsTenant && (n.id==="super_admin" || n.id==="master")) return false;
-    // Permissão do usuário (perms salvas no user)
+    // No modo preview, esconde itens de admin (simula usuário comum)
+    if(viewAsTenant && ADMIN_NAV_IDS.has(n.id)) return false;
+    // Permissão do usuário (role-based)
     if(!hasAccess(n.id)) return false;
+    // Itens admin (master, super_admin) passam direto — não entram no nav_perms
+    if(ADMIN_NAV_IDS.has(n.id)) return true;
     // nav_perms da empresa (preview ou tenant logado)
     const effective = previewNavPerms || tenantNavPerms;
     if(effective) return effective.includes(n.id);
@@ -8334,7 +8118,6 @@ export default function App() {
     if(pg==="messages") return <Messages leads={leads} profile={profile}/>;
     if(pg==="whatsapp") return <WhatsappSender leads={leads} profile={profile} webhook={ownerWebhook}/>;
     if(pg==="crm") return <CRM leads={leads} onUpdateLead={updateLead} onDeleteLead={deleteLead}/>;
-    if(pg==="funil") return <FunnelPage leads={leads} onUpdateLead={updateLead} currentUser={user} isMaster={isMaster}/>;
     if(pg==="metas") return <GoalsDashboard leads={leads} users={DB.all()||[]} currentUser={user}/>;
     if(pg==="cadencia") return <Cadencias leads={leads} currentUser={user} onUpdateLead={updateLead}/>;
     if(pg==="prospeccao") return <Prospeccao currentUser={user}/>;
@@ -8472,7 +8255,7 @@ export default function App() {
                 <div style={{flex:1,overflow:"hidden"}}><div style={{fontSize:11,fontWeight:700,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{user.name}</div><div style={{fontSize:9,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{user.email}</div></div>
               </div>
               <button onClick={()=>setUser(null)} style={{width:"100%",padding:"6px",background:"rgba(248,113,113,0.08)",border:"1px solid rgba(248,113,113,0.2)",borderRadius:7,color:"#F87171",fontSize:11,fontWeight:600,cursor:"pointer"}}>Sair da conta</button>
-              <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:6,height:6,borderRadius:"50%",background:"#4ADE80",flexShrink:0}}/><span style={{fontSize:9,color:C.faint}}>OPEN Log v9.0 · IA Ativa</span></div>
+              <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:6,height:6,borderRadius:"50%",background:"#4ADE80",flexShrink:0}}/><span style={{fontSize:9,color:C.faint}}>● Online</span></div>
             </>
           ):(
             <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
