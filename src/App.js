@@ -1727,12 +1727,21 @@ function DrillUsuarios({ srcLeads=[], users=[], isPosVenda=false, modTab="todos"
   );
 }
 
-function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isMaster=false, navPerms=null}) {
+function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=false, navPerms=null}) {
   const [modTab, setModTab] = useState("todos"); // todos | prospeccao | receptivo | pos_venda | reativacao | ativo
   const [posVendaData, setPosVendaData] = useState([]);
   const [leadStages, setLeadStages] = useState([]); // dados reais de lead_stages
+  const [tenantUsers, setTenantUsers] = useState([]); // usuários reais do tenant
 
   const tenantId = currentUser?.tenant_id;
+
+  // Carrega usuários reais do tenant (para o DrillUsuarios)
+  useEffect(()=>{
+    if(!tenantId) return;
+    sbAuth.getTenantUsers(tenantId)
+      .then(data => setTenantUsers(Array.isArray(data)?data:[]))
+      .catch(()=>{});
+  },[tenantId]);
 
   // Carrega lead_stages do Supabase para montar funil real
   useEffect(()=>{
@@ -1954,7 +1963,7 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
         {/* Drill por Usuário */}
         <DrillUsuarios
           srcLeads={isPosVenda ? posLeads : fl}
-          users={users}
+          users={tenantUsers}
           isPosVenda={isPosVenda}
           modTab={modTab}
         />
@@ -8090,7 +8099,7 @@ export default function App() {
   const presentGroups = [...new Set(nav.map(n=>n.group))];
   const groups = ["Principal","Comunicação","Gestão","Módulos","Master","Owner","Administração"].filter(g=>presentGroups.includes(g));
   const renderPage = (pg) => {
-    if(pg==="dashboard") return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} users={DB.all()} currentUser={user} isMaster={isMaster} navPerms={isOwner&&!viewAsTenant?null:(previewNavPerms||tenantNavPerms)}/>;
+    if(pg==="dashboard") return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} currentUser={user} isMaster={isMaster} navPerms={isOwner&&!viewAsTenant?null:(previewNavPerms||tenantNavPerms)}/>;
     if(pg==="profile") return <CompanyProfile profile={profile} tenantId={user?.tenant_id} onSave={p=>{setProfile(p);notify("Perfil salvo!");}} />;
     if(pg==="search") return <SearchLeads onLeadsFound={addLead} onAddToProsp={addToProsp} existingLeads={leads} profile={profile} currentUser={user} ownerWebhook={ownerWebhooks.busca_leads||ownerWebhook}/>;
     if(pg==="addlead") return <AddLead onLeadsFound={addLead} existingLeads={leads} profile={profile}/>;
@@ -8110,7 +8119,7 @@ export default function App() {
       onViewAsTenant={(t)=>{ setViewAsTenant(t); setPage("dashboard"); }}
       onModulesUpdated={(tenantId, mods, cfg)=>{ setViewAsTenant(v=> v?.id===tenantId ? {...v,modules:mods,config:cfg} : v); }}
     />;
-    return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} users={DB.all()||[]} currentUser={user} isMaster={isMaster} navPerms={isOwner&&!viewAsTenant?null:(previewNavPerms||tenantNavPerms)}/>;
+    return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} currentUser={user} isMaster={isMaster} navPerms={isOwner&&!viewAsTenant?null:(previewNavPerms||tenantNavPerms)}/>;
   };
 
   // Guard: if current page not accessible, redirect to dashboard
