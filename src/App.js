@@ -1625,18 +1625,29 @@ function CentralDecisao({ leads, onSetPage, onAcionar, leadStages=[] }) {
 function DrillUsuarios({ srcLeads=[], users=[], isPosVenda=false, modTab="todos" }) {
   const [drillUser, setDrillUser] = useState(null);
 
+  // Mapa email/id → nome real do usuário (para resolver responsible → nome)
+  const userNameMap = {};
+  users.forEach(u => {
+    const displayName = u.full_name || (u.name && !["Owner","Master","Admin","User"].includes(u.name) ? u.name : null) || u.email || u.name || "";
+    if(u.email) userNameMap[u.email.toLowerCase()] = displayName;
+    if(u.id)    userNameMap[String(u.id)]          = displayName;
+    if(u.name)  userNameMap[u.name.toLowerCase()]  = displayName;
+  });
+  const resolveDisplayName = (key) => userNameMap[key?.toLowerCase?.()] || userNameMap[String(key)] || key || "Sem responsável";
+
   // Agrupa leads por responsável
   const byUser = {};
   srcLeads.forEach(l => {
-    const key = l.responsible || (isPosVenda ? (l.vendedor || "Sem responsável") : "Sem responsável");
-    if(!byUser[key]) byUser[key] = { name:key, total:0, statusMap:{} };
-    byUser[key].total++;
+    const rawKey = l.responsible || (isPosVenda ? (l.vendedor || "Sem responsável") : "Sem responsável");
+    const displayKey = resolveDisplayName(rawKey);
+    if(!byUser[displayKey]) byUser[displayKey] = { name:displayKey, total:0, statusMap:{} };
+    byUser[displayKey].total++;
     const stLabel = isPosVenda ? (l.status_envio||"Aguardando") : (l.status||"—");
-    byUser[key].statusMap[stLabel] = (byUser[key].statusMap[stLabel]||0) + 1;
+    byUser[displayKey].statusMap[stLabel] = (byUser[displayKey].statusMap[stLabel]||0) + 1;
   });
-  // Adiciona usuários sem leads para aparecerem na lista
+  // Adiciona usuários sem leads para aparecerem na lista (usa nome real)
   users.forEach(u => {
-    const k = u.name || u.email || "";
+    const k = u.full_name || (u.name && !["Owner","Master","Admin","User"].includes(u.name) ? u.name : null) || u.email || "";
     if(k && !byUser[k]) byUser[k] = { name:k, total:0, statusMap:{} };
   });
   const rows = Object.values(byUser).sort((a,b) => b.total - a.total);
@@ -1716,7 +1727,7 @@ function DrillUsuarios({ srcLeads=[], users=[], isPosVenda=false, modTab="todos"
   );
 }
 
-function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isMaster=false}) {
+function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isMaster=false, navPerms=null}) {
   const [modTab, setModTab] = useState("todos"); // todos | prospeccao | receptivo | pos_venda | reativacao | ativo
   const [posVendaData, setPosVendaData] = useState([]);
   const [leadStages, setLeadStages] = useState([]); // dados reais de lead_stages
@@ -1836,14 +1847,18 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
   const scopeId=currentUser?.id||"company";
   const [detailLead,setDetailLead]=useState(null);
 
-  // Module tabs config
-  const modTabs = [
-    {id:"todos",      label:"🔢 Todos",        count:leads.length,      color:C.accent},
+  // Módulos liberados pelo owner (navPerms null = tudo liberado)
+  const modEnabled = (modId) => !navPerms || navPerms.includes(modId);
+
+  // Module tabs config — só exibe módulos habilitados pelo owner
+  const allModTabs = [
+    {id:"todos",      label:"🔢 Todos",        count:leads.length,      color:C.accent,    always:true},
     {id:"prospeccao", label:"🎯 Prospecção",   count:proLeads.length,   color:"#3B82F6"},
     {id:"receptivo",  label:"📥 Receptivo",    count:recLeads.length,   color:"#8B5CF6"},
     {id:"pos_venda",  label:"🤝 Pós-venda",    count:posLeads.length,   color:"#4ADE80"},
     {id:"reativacao", label:"🔄 Reativação",   count:reaLeads.length,   color:"#F59E0B"},
   ];
+  const modTabs = allModTabs.filter(t => t.always || modEnabled(t.id));
 
   return (
     <div>
@@ -1875,15 +1890,15 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
         <KpiCard value={isPosVenda?posLeads.filter(c=>getPvStageId(c)==="enviado").length:fl.filter(l=>l.priority==="Alta").length} label={isPosVenda?"Enviados":"Alta Prior."} accent={isPosVenda?"#3B82F6":"#F87171"} pos={false}/>
       </div>
 
-      {/* Visão total — resumo de módulos */}
+      {/* Visão total — resumo de módulos habilitados */}
       {modTab==="todos"&&(
         <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}} className="mob-grid-1">
           {[
-            {label:"🎯 Prospecção", leads:proLeads,   color:"#3B82F6", page:"crm"},
-            {label:"📥 Receptivo",  leads:recLeads,   color:"#8B5CF6", page:"receptivo"},
-            {label:"🤝 Pós-venda",  leads:posLeads,   color:"#4ADE80", page:"pos_venda", isPV:true},
-            {label:"🔄 Reativação", leads:reaLeads,   color:"#F59E0B", page:"reativacao"},
-          ].map(mod=>{
+            {id:"prospeccao", label:"🎯 Prospecção", leads:proLeads,   color:"#3B82F6", page:"crm"},
+            {id:"receptivo",  label:"📥 Receptivo",  leads:recLeads,   color:"#8B5CF6", page:"receptivo"},
+            {id:"pos_venda",  label:"🤝 Pós-venda",  leads:posLeads,   color:"#4ADE80", page:"pos_venda", isPV:true},
+            {id:"reativacao", label:"🔄 Reativação", leads:reaLeads,   color:"#F59E0B", page:"reativacao"},
+          ].filter(mod => modEnabled(mod.id)).map(mod=>{
             const fechados = mod.isPV
               ? mod.leads.filter(l=>["agendou"].includes(getPvStageId(l))).length
               : mod.leads.filter(l=>["Contratou","Fechado","finalizado"].includes(l.status)).length;
@@ -1905,40 +1920,6 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
         </div>
       )}
 
-      {/* Metas */}
-      <div style={{...card({padding:18}),marginBottom:20}}>
-        <div style={{fontSize:14,fontWeight:800,color:C.text,marginBottom:14}}>🎯 Metas</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}} className="mob-grid-1">
-          {[["dia","Hoje",todayLeads],["semana","Semana",weekLeads],["mes","Mês",monthLeads]].map(([period,plabel,pl])=>(
-            <div key={period} style={{background:C.sidebar,borderRadius:10,padding:12,border:"1px solid "+C.border}}>
-              <div style={{fontSize:10,fontWeight:800,color:C.accent,letterSpacing:1,textTransform:"uppercase",marginBottom:10,textAlign:"center"}}>{plabel}</div>
-              {GOAL_INDICATORS.map(ind=>{
-                const meta=getGoalValue("company",period,ind.id)||getGoalValue(scopeId,period,ind.id);
-                const atual=computeProgress(fl,ind.id,pl);
-                const faltam=Math.max(0,meta-atual);
-                const pct=meta>0?Math.min(100,Math.round((atual/meta)*100)):0;
-                const cor=pct>=100?"#4ADE80":pct>=70?ind.color:pct>=40?"#F59E0B":"#EF4444";
-                return (
-                  <div key={ind.id} style={{marginBottom:10}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
-                      <span style={{fontSize:10,color:C.muted}}>{ind.icon} {ind.label}</span>
-                      <span style={{fontSize:10,fontWeight:800,color:cor}}>{meta>0?(pct+"%"):"—"}</span>
-                    </div>
-                    <div style={{height:5,background:C.border,borderRadius:4,overflow:"hidden",marginBottom:3}}>
-                      <div style={{height:"100%",width:(pct+"%"),background:cor,borderRadius:4,transition:"width 0.5s"}}/>
-                    </div>
-                    <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:C.faint}}>
-                      <span style={{color:cor,fontWeight:700}}>{atual} realizado</span>
-                      {meta>0&&<span>{faltam>0?("faltam "+faltam):<span style={{color:"#4ADE80",fontWeight:700}}>✅ Meta!</span>}</span>}
-                      {meta===0&&<span style={{color:C.faint}}>sem meta</span>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ))}
-        </div>
-      </div>
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
         {/* Funil */}
@@ -1979,8 +1960,6 @@ function Dashboard({leads, onSetPage, onAcionar, users=[], currentUser=null, isM
         />
       </div>
 
-      {/* Central de Decisão */}
-      <CentralDecisao leads={fl} onSetPage={onSetPage} onAcionar={onAcionar} leadStages={leadStages}/>
     </div>
   );
 }
@@ -8111,7 +8090,7 @@ export default function App() {
   const presentGroups = [...new Set(nav.map(n=>n.group))];
   const groups = ["Principal","Comunicação","Gestão","Módulos","Master","Owner","Administração"].filter(g=>presentGroups.includes(g));
   const renderPage = (pg) => {
-    if(pg==="dashboard") return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} users={DB.all()} currentUser={user} isMaster={isMaster}/>;
+    if(pg==="dashboard") return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} users={DB.all()} currentUser={user} isMaster={isMaster} navPerms={isOwner&&!viewAsTenant?null:(previewNavPerms||tenantNavPerms)}/>;
     if(pg==="profile") return <CompanyProfile profile={profile} tenantId={user?.tenant_id} onSave={p=>{setProfile(p);notify("Perfil salvo!");}} />;
     if(pg==="search") return <SearchLeads onLeadsFound={addLead} onAddToProsp={addToProsp} existingLeads={leads} profile={profile} currentUser={user} ownerWebhook={ownerWebhooks.busca_leads||ownerWebhook}/>;
     if(pg==="addlead") return <AddLead onLeadsFound={addLead} existingLeads={leads} profile={profile}/>;
@@ -8131,7 +8110,7 @@ export default function App() {
       onViewAsTenant={(t)=>{ setViewAsTenant(t); setPage("dashboard"); }}
       onModulesUpdated={(tenantId, mods, cfg)=>{ setViewAsTenant(v=> v?.id===tenantId ? {...v,modules:mods,config:cfg} : v); }}
     />;
-    return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} users={DB.all()||[]} currentUser={user} isMaster={isMaster}/>;
+    return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} users={DB.all()||[]} currentUser={user} isMaster={isMaster} navPerms={isOwner&&!viewAsTenant?null:(previewNavPerms||tenantNavPerms)}/>;
   };
 
   // Guard: if current page not accessible, redirect to dashboard
