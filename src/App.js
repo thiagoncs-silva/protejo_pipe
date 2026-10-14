@@ -1016,7 +1016,7 @@ function AuthScreen({ onLogin, onShowOnboarding }) {
         id: userRow.id,
         name: userRow.name,
         email: userRow.email,
-        role: userRow.role,
+        role: (userRow.role||"user").toLowerCase().trim(), // normaliza sempre lowercase
         status: userRow.status,
         perms: userRow.perms || [],
         tenant_id: userRow.tenant_id,
@@ -1029,7 +1029,7 @@ function AuthScreen({ onLogin, onShowOnboarding }) {
       if(u && u.password === form.password){
         if(u.status==="cancelado"){setErr("Acesso cancelado. Contate o administrador.");setBusy(false);return;}
         DB.update(u.id,{lastLogin:new Date().toISOString()});
-        onLogin(u);
+        onLogin({...u, role:(u.role||"user").toLowerCase().trim()});
         return;
       }
       setErr(e.message||"Email ou senha incorretos.");
@@ -8099,10 +8099,16 @@ export default function App() {
     if(isOwner && !viewAsTenant) return true;
     // No modo preview, esconde itens de admin (simula usuário comum)
     if(viewAsTenant && ADMIN_NAV_IDS.has(n.id)) return false;
-    // Permissão do usuário (role-based)
+    // Itens admin (master, super_admin): controlados SOMENTE por role — nav_perms nunca bloqueia
+    // master → visível para role "master", "owner", "admin"
+    // super_admin → visível apenas para role "owner"
+    if(ADMIN_NAV_IDS.has(n.id)) {
+      if(n.id==="super_admin") return isOwner;
+      if(n.id==="master") return isMaster || isAdmin;
+      return false;
+    }
+    // Permissão do usuário (role-based) para itens comuns
     if(!hasAccess(n.id)) return false;
-    // Itens admin (master, super_admin) passam direto — não entram no nav_perms
-    if(ADMIN_NAV_IDS.has(n.id)) return true;
     // nav_perms da empresa (preview ou tenant logado)
     const effective = previewNavPerms || tenantNavPerms;
     if(effective) return effective.includes(n.id);
