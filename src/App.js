@@ -7369,6 +7369,7 @@ const NAV_MENU_DEF = [
     {id:"metas",      label:"Metas"},
     {id:"cadencia",   label:"Cadências"},
     {id:"settings",   label:"Configurações"},
+    {id:"master",     label:"Controle de Acesso"},
   ]},
   { group:"Módulos", icon:"🧩", items:[
     {id:"prospeccao", label:"Prospecção"},
@@ -8078,9 +8079,8 @@ export default function App() {
     {id:"reativacao",  label:"Reativação",          icon:"refresh",   group:"Módulos"},
     {id:"suporte",     label:"Suporte",              icon:"headset",   group:"Módulos"},
     {id:"settings", label:"Configurações",    icon:"settings",  group:"Gestão"},
-    // Itens de controle — sempre visíveis por role, NUNCA filtrados por nav_perms
-    ...(isOwner||isMaster||isAdmin?[{id:"master",label:"Controle de Acesso",icon:"shield",group:"Controle",master:true}]:[]),
-    ...(isOwner?[{id:"super_admin",label:"Super Admin",icon:"settings",group:"Controle",owner:true}]:[]),
+    ...(isOwner||isMaster||isAdmin?[{id:"master",label:"Controle de Acesso",icon:"shield",group:"Gestão",master:true}]:[]),
+    ...(isOwner?[{id:"super_admin",label:"Super Admin",icon:"settings",group:"Administração",owner:true}]:[]),
   ];
   // nav_perms salvo no config do tenant — lista de IDs visíveis para a empresa
   const parseCfgNav = (c) => {
@@ -8109,7 +8109,7 @@ export default function App() {
     return true; // sem nav_perms configurado = tudo visível
   });
   const presentGroups = [...new Set(nav.map(n=>n.group))];
-  const groups = ["Principal","Comunicação","Gestão","Módulos","Controle","Master","Owner","Administração"].filter(g=>presentGroups.includes(g));
+  const groups = ["Principal","Comunicação","Gestão","Módulos","Master","Owner","Administração"].filter(g=>presentGroups.includes(g));
   const renderPage = (pg) => {
     if(pg==="dashboard") return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} users={DB.all()} currentUser={user} isMaster={isMaster}/>;
     if(pg==="profile") return <CompanyProfile profile={profile} tenantId={user?.tenant_id} onSave={p=>{setProfile(p);notify("Perfil salvo!");}} />;
@@ -8230,7 +8230,6 @@ export default function App() {
             <div key={g}>
               {open&&<div style={{fontSize:9,color:C.faint,letterSpacing:1.5,textTransform:"uppercase",fontWeight:700,padding:"10px 12px 5px"}}>{g}</div>}
               {!open&&<div style={{height:8}}/>}
-              {g==="Controle"&&open&&<div style={{height:1,background:"linear-gradient(90deg,#F59E0B33,transparent)",margin:"8px 4px 4px"}}/>}
               {g==="Master"&&open&&<div style={{height:1,background:"linear-gradient(90deg,#F59E0B33,transparent)",margin:"8px 4px 4px"}}/>}
               {g==="Owner"&&open&&<div style={{height:1,background:"linear-gradient(90deg,#A855F733,transparent)",margin:"8px 4px 4px"}}/>}
               {nav.filter(n=>n.group===g).map(item=>{
