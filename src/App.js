@@ -1758,6 +1758,7 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
     "Em conversa":     "Respondeu",
     "Agendou reunião": "Agendou reunião",
     "Sem resposta":    "Sem resposta",
+    "Erro":            "Erro",
   }[s] || (s ? s : "Enviado"));
 
   useEffect(()=>{
@@ -1798,7 +1799,7 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
       "Respondeu":       "em_conversa",
       "Agendou reunião": "agendou",
       "Sem resposta":    "sem_resposta",
-      "Erro":            "aguardando",   // erro de agenda → aparece em Aguardando no dashboard
+      "Erro":            "erro",
     };
     return map[st] || "aguardando";
   };
@@ -5937,13 +5938,14 @@ function Reativacao({ leads, onUpdateLead, onSetPage }) {
 
 // ─── MÓDULO PROSPECÇÃO ────────────────────────────────────────────────────────
 const PROSP_STAGES = [
-  {id:"novo",             name:"Novo",             color:"#6B7280", icon:"🆕"},
-  {id:"primeiro_contato", name:"1º Contato",       color:"#3B82F6", icon:"📞"},
-  {id:"em_conversa",      name:"Em conversa",      color:"#F59E0B", icon:"💬"},
-  {id:"agendou_reuniao",  name:"Agendou reunião",  color:"#10B981", icon:"📅"},
-  {id:"proposta",         name:"Proposta",         color:"#8B5CF6", icon:"📄"},
-  {id:"fechado",          name:"Fechado",          color:"#4ADE80", icon:"🎉"},
-  {id:"perdido",          name:"Perdido",          color:"#F87171", icon:"❌"},
+  {id:"novo",             name:"Novo",                  color:"#6B7280", icon:"🆕"},
+  {id:"primeiro_contato", name:"1º Contato",            color:"#3B82F6", icon:"📞"},
+  {id:"em_conversa",      name:"Em conversa",           color:"#F59E0B", icon:"💬"},
+  {id:"agendou_reuniao",  name:"Agendou reunião",       color:"#10B981", icon:"📅"},
+  {id:"proposta",         name:"Proposta",              color:"#8B5CF6", icon:"📄"},
+  {id:"fechado",          name:"Fechado",               color:"#4ADE80", icon:"🎉"},
+  {id:"perdido",          name:"Perdido",               color:"#94A3B8", icon:"❌"},
+  {id:"erro",             name:"Erro no acionamento",   color:"#EF4444", icon:"⚠️"},
 ];
 
 function Prospeccao({ currentUser, onAddToProsp }) {
@@ -6079,11 +6081,11 @@ function Prospeccao({ currentUser, onAddToProsp }) {
       {error&&<div style={{...card({padding:12}),color:"#F87171",fontSize:12,marginBottom:16}}>{error}</div>}
 
       {/* KPIs */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:10,marginBottom:20}} className="mob-grid-2">
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:20}}>
         {PROSP_STAGES.map(s=>(
-          <div key={s.id} style={card({padding:12})}>
-            <div style={{fontSize:20,fontWeight:900,color:s.color}}>{visLeads.filter(l=>getStageId(l)===s.id).length}</div>
-            <div style={{fontSize:10,color:C.muted}}>{s.icon} {s.name}</div>
+          <div key={s.id} style={{...card({padding:"14px 16px"}),borderLeft:"3px solid "+s.color}}>
+            <div style={{fontSize:24,fontWeight:900,color:s.color,lineHeight:1}}>{visLeads.filter(l=>getStageId(l)===s.id).length}</div>
+            <div style={{fontSize:11,color:C.muted,marginTop:5}}>{s.icon} {s.name}</div>
           </div>
         ))}
       </div>
@@ -6102,11 +6104,11 @@ function Prospeccao({ currentUser, onAddToProsp }) {
 
       {/* ── KANBAN ── */}
       {!loading&&tab==="kanban"&&(
-        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:10,alignItems:"start"}}>
+        <div style={{display:"flex",gap:10,overflowX:"auto",paddingBottom:8,alignItems:"start"}}>
           {PROSP_STAGES.map(stage=>{
             const cols = visLeads.filter(l=>getStageId(l)===stage.id);
             return (
-              <div key={stage.id}>
+              <div key={stage.id} style={{minWidth:180,flex:"0 0 180px"}}>
                 <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:8,padding:"7px 9px",background:stage.color+"14",border:"1px solid "+stage.color+"30",borderRadius:8}}>
                   <span style={{fontSize:13}}>{stage.icon}</span>
                   <span style={{fontSize:11,fontWeight:700,color:stage.color,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{stage.name}</span>
@@ -6529,11 +6531,12 @@ function Suporte({ leads, onUpdateLead, currentUser }) {
 // ─── MÓDULO PÓS-VENDA ────────────────────────────────────────────────────────
 // v28: migrado para usar tabela `leads` com module='pos_venda' + lead_stages
 const PV_STAGES = [
-  {id:"aguardando",   name:"Aguardando",     color:"#6B7280", icon:"⏳"},
-  {id:"enviado",      name:"Enviado",        color:"#3B82F6", icon:"📤"},
-  {id:"em_conversa",  name:"Respondeu",      color:"#F59E0B", icon:"💬"},
-  {id:"agendou",      name:"Agendou reunião",color:"#10B981", icon:"📅"},
-  {id:"sem_resposta", name:"Sem resposta",   color:"#F87171", icon:"🔕"},
+  {id:"aguardando",   name:"Aguardando",          color:"#6B7280", icon:"⏳"},
+  {id:"enviado",      name:"Enviado",             color:"#3B82F6", icon:"📤"},
+  {id:"em_conversa",  name:"Respondeu",           color:"#F59E0B", icon:"💬"},
+  {id:"agendou",      name:"Agendou reunião",     color:"#10B981", icon:"📅"},
+  {id:"sem_resposta", name:"Sem resposta",        color:"#94A3B8", icon:"🔕"},
+  {id:"erro",         name:"Erro no acionamento", color:"#EF4444", icon:"⚠️"},
 ];
 
 function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
@@ -6642,6 +6645,15 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
     } catch(e) { setError(e.message); }
   };
 
+  // ── Retentar acionamento de registro já na pos_venda com Erro ──────────────
+  const retentarPvErro = async (item) => {
+    try {
+      await sbFetch("pos_venda?id=eq."+item.id+"&tenant_id=eq."+tenantId, "PATCH", {status_envio: "Aguardando"});
+      setClientes(cs=>cs.map(c=>c.id===item.id?{...c,status_envio:"Aguardando"}:c));
+      notify("🔄 Marcado como Aguardando — será reprocessado.");
+    } catch(e) { setError(e.message); }
+  };
+
   // ── Salvar novo cliente ───────────────────────────────────────────────────────
   const salvarCliente = async () => {
     if(!form.nome||!form.telefone){ setError("Nome e telefone são obrigatórios."); return; }
@@ -6703,7 +6715,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
 
   // Todos os status possíveis — agenda + pos_venda
   const PV_STATUS = ["Aguardando","Erro","Agendado","Enviado","Respondeu","Agendou reunião","Sem resposta"];
-  const PV_STATUS_EDITAVEIS = ["Enviado","Respondeu","Agendou reunião","Sem resposta"]; // só pos_venda
+  const PV_STATUS_EDITAVEIS = ["Enviado","Respondeu","Agendou reunião","Sem resposta","Erro"]; // pos_venda — Erro = falha no acionamento
   const FILTROS = [
     {id:"todos", label:"Todos", count:total},
     ...PV_STATUS.map(s=>({id:s,label:s,count:clientes.filter(c=>(c.status_envio||"Aguardando")===s).length})),
@@ -6880,6 +6892,12 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
                                   ))}
                                 </select>
                               </div>
+                              {status==="Erro"&&(
+                                <button onClick={e=>{e.stopPropagation();retentarPvErro(c);}}
+                                  style={{marginTop:6,width:"100%",padding:"5px",fontSize:10,fontWeight:700,background:"#EF444420",border:"1px solid #EF444460",borderRadius:6,color:"#EF4444",cursor:"pointer"}}>
+                                  🔄 Retentar acionamento
+                                </button>
+                              )}
                             </div>
                           ))}
                           {stageLeads.length===0&&(
