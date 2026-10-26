@@ -6656,16 +6656,21 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
 
   // ── Salvar novo cliente ───────────────────────────────────────────────────────
   const salvarCliente = async () => {
-    if(!form.nome||!form.telefone){ setError("Nome e telefone são obrigatórios."); return; }
-    if(!form.data_agendamento||!form.hora_agendamento){ setError("Data e horário do acionamento são obrigatórios."); return; }
+    const isLote = lote.length > 0;
+    if(!isLote && (!form.nome||!form.telefone)){ setError("Nome e telefone são obrigatórios."); return; }
+    // data/hora obrigatório apenas no cadastro individual (no lote pode ser preenchido depois)
+    if(!isLote && (!form.data_agendamento||!form.hora_agendamento)){ setError("Data e horário do acionamento são obrigatórios."); return; }
     setSaving(true); setError("");
     try {
-      const lista = lote.length>0 ? lote : [form];
+      const lista = isLote ? lote : [form];
+      // data/hora padrão do formulário para uso no lote importado
+      const dataDefault = form.data_agendamento && form.hora_agendamento
+        ? new Date(form.data_agendamento+"T"+form.hora_agendamento+":00").toISOString()
+        : null;
       for(const item of lista){
-        // Monta data_agendamento como timestamptz
         const dataAg = item.data_agendamento && item.hora_agendamento
-          ? new Date(item.data_agendamento+"T"+item.hora_agendamento+":00").toISOString()
-          : null;
+          ? new Date(item.data_agendamento+"T"+(item.hora_agendamento||"08:00")+":00").toISOString()
+          : dataDefault; // usa data do formulário como fallback para o lote
         await sbFetch("pos_venda_agenda","POST",{
           tenant_id: tenantId,
           nome: item.nome,
@@ -6681,7 +6686,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
       setLote([]);
       setForm({nome:"",telefone:"",cpf_cnpj:"",vendedor:"",data_relacionamento:"",data_agendamento:"",hora_agendamento:""});
       setShowForm(false);
-      notify("✅ Cliente agendado com sucesso!");
+      notify("✅ "+(isLote?lista.length+" clientes importados":"Cliente agendado")+" com sucesso!");
       loadClientes();
     } catch(e){
       setError("Erro ao salvar: "+e.message);
@@ -7138,26 +7143,46 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
                     if(!file) return;
                     try {
                       const text = await file.text();
-                      const rows = text.trim().split("\n");
-                      const header = rows[0].split(/[;,]/).map(h=>h.trim().toLowerCase().replace(/"/g,""));
-                      const getCol = (row, names) => {
-                        const idx = names.map(n=>header.indexOf(n)).find(i=>i>=0);
-                        return idx>=0 ? row[idx]?.replace(/"/g,"")?.trim() : "";
+                      // Detecta separador (ponto-e-vírgula ou vírgula)
+                      const sep = text.indexOf(";")!==-1 ? ";" : ",";
+                      // Parser CSV respeitando aspas (campos com vírgula dentro de "")
+                      const parseCSVRow = (line) => {
+                        const result=[]; let cur=""; let inQ=false;
+                        for(let i=0;i<line.length;i++){
+                          const ch=line[i];
+                          if(ch==='"'){ inQ=!inQ; }
+                          else if(ch===sep&&!inQ){ result.push(cur.trim()); cur=""; }
+                          else { cur+=ch; }
+                        }
+                        result.push(cur.trim());
+                        return result;
+                      };
+                      const rows = text.trim().split(/\r?\n/);
+                      // Normaliza header: minúsculo, sem aspas, sem acentos
+                      const norm = s => s.toLowerCase().replace(/"/g,"").trim()
+                        .normalize("NFD").replace(/[̀-ͯ]/g,"");
+                      const header = parseCSVRow(rows[0]).map(norm);
+                      const getCol = (cols, names) => {
+                        const idx = names.map(n=>header.indexOf(norm(n))).find(i=>i>=0);
+                        return idx>=0 ? (cols[idx]||"").replace(/"/g,"").trim() : "";
                       };
                       const imported = rows.slice(1).filter(r=>r.trim()).map(row=>{
-                        const cols = row.split(/[;,]/);
+                        const cols = parseCSVRow(row);
                         return {
                           _id: Date.now()+Math.random(),
-                          nome: getCol(cols,["nome","name","cliente","razao_social","razão social"]),
-                          telefone: getCol(cols,["telefone","celular","fone","phone","tel"]),
-                          cpf_cnpj: getCol(cols,["cpf","cnpj","cpf_cnpj","documento"]),
-                          vendedor: getCol(cols,["vendedor","seller","responsavel"])||form.vendedor,
-                          data_relacionamento: getCol(cols,["data_relacionamento","data relacionamento","data"]),
-                          data_agendamento: form.data_agendamento,
-                          hora_agendamento: form.hora_agendamento,
+                          nome: getCol(cols,["nome","name","cliente","razao_social","razão social","razao social","razão_social","razao_social","razão_social"]),
+                          telefone: getCol(cols,["telefone","celular","fone","phone","tel","whatsapp"]),
+                          cpf_cnpj: getCol(cols,["cpf","cnpj","cpf_cnpj","cpf/cnpj","documento"]),
+                          vendedor: getCol(cols,["vendedor","seller","responsavel","responsável"])||form.vendedor,
+                          data_relacionamento: getCol(cols,["data_relacionamento","data relacionamento","data_rel","data de cadastro","data_cadastro","data"]),
+                          data_agendamento: getCol(cols,["data_agendamento","data_acionamento"])||form.data_agendamento,
+                          hora_agendamento: getCol(cols,["hora_agendamento","hora"])||form.hora_agendamento,
                         };
                       }).filter(r=>r.nome&&r.telefone);
+                      if(imported.length===0){ setError("Nenhum registro válido encontrado. Verifique se o CSV tem colunas 'nome' e 'telefone'."); return; }
                       setLote(l=>[...l,...imported]);
+                      setError("");
+                      notify("📋 "+imported.length+" contatos carregados — defina a data/hora e clique em Salvar.");
                     } catch(err) { setError("Erro ao importar: "+err.message); }
                     e.target.value="";
                   }}/>
@@ -7192,9 +7217,10 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
               </div>
             </div>
 
-            {/* Agendamento — obrigatório */}
+            {/* Agendamento — obrigatório individual, padrão para lote */}
             <div style={{padding:"12px 14px",background:C.accent+"12",border:"1px solid "+C.accent+"33",borderRadius:10,marginBottom:14}}>
-              <div style={{fontSize:12,fontWeight:700,color:C.accent,marginBottom:10}}>📅 Data e horário do acionamento *</div>
+              <div style={{fontSize:12,fontWeight:700,color:C.accent,marginBottom:4}}>📅 Data e horário do acionamento {lote.length>0?"(padrão para o lote)":"*"}</div>
+              {lote.length>0&&<div style={{fontSize:10,color:C.muted,marginBottom:8}}>Usado para contatos sem data própria no CSV</div>}
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                 <div>
                   <div style={lbl}>Data *</div>
