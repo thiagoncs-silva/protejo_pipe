@@ -4288,7 +4288,7 @@ const RECEPTIVO_STAGES = [
   { id:"r6", name:"Perdido",         color:"#F87171", maxHours:999,icon:"❌" },
 ];
 
-const RECEPTIVO_CANAIS = ["WhatsApp","Formulário","Ligação","Email","Instagram","Indicação"];
+const RECEPTIVO_CANAIS = ["WhatsApp","Formulário","Ligação","Email","Instagram","Facebook","Indicação","Outros"];
 
 // Templates de resposta rápida por canal
 const RECEPTIVO_TEMPLATES = {
@@ -4528,7 +4528,7 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}} className="mob-grid-2">
             {RECEPTIVO_CANAIS.map(ch=>{
               const count = porCanal[ch]||0;
-              const color = ch==="WhatsApp"?"#25D366":ch==="Formulário"?"#6366F1":ch==="Ligação"?"#F59E0B":ch==="Email"?"#3B82F6":ch==="Instagram"?"#E1306C":"#8B5CF6";
+              const color = ch==="WhatsApp"?"#25D366":ch==="Formulário"?"#6366F1":ch==="Ligação"?"#F59E0B":ch==="Email"?"#3B82F6":ch==="Instagram"?"#E1306C":ch==="Facebook"?"#1877F2":ch==="Indicação"?"#10B981":"#94A3B8";
               return (
                 <div key={ch} style={{...card({padding:16}),borderLeft:"4px solid "+color}}>
                   <div style={{fontSize:24,fontWeight:900,color}}>{count}</div>
@@ -4545,7 +4545,7 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
               const total = porCanal[ch]||0;
               const fechados = recLeads.filter(l=>(l.canal===ch||l.channel===ch)&&l.status==="Fechado").length;
               const taxa = total>0?Math.round(fechados/total*100):0;
-              const color = ch==="WhatsApp"?"#25D366":ch==="Formulário"?"#6366F1":"#F59E0B";
+              const color = ch==="WhatsApp"?"#25D366":ch==="Formulário"?"#6366F1":ch==="Ligação"?"#F59E0B":ch==="Email"?"#3B82F6":ch==="Instagram"?"#E1306C":ch==="Facebook"?"#1877F2":ch==="Indicação"?"#10B981":"#94A3B8";
               return (
                 <div key={ch} style={{marginBottom:12}}>
                   <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
@@ -8066,26 +8066,29 @@ export default function App() {
   const notify=(msg,type="ok")=>{setNotif({msg,type});setTimeout(()=>setNotif(null),3000);}; 
   const addLead=async(lead)=>{
     if(leads.find(l=>l.name.toLowerCase()===lead.name.toLowerCase()&&l.company?.toLowerCase()===lead.company?.toLowerCase())){notify("Lead já existe no CRM","warn");return;}
-    const firstStage=FUNIL_STAGES[0];
-    const withStage={...lead,funilStage:firstStage?.id||"f1",status:firstStage?.name||"Novo contato",tenant_id:user?.tenant_id||null,module:"prospeccao"};
+    const isReceptivo = lead.module==="receptivo";
+    const firstStage = isReceptivo ? RECEPTIVO_STAGES[0] : FUNIL_STAGES[0];
+    const withStage={...lead,funilStage:firstStage?.id||(isReceptivo?"r1":"f1"),status:firstStage?.name||"Novo contato",tenant_id:user?.tenant_id||null,module:lead.module||"prospeccao"};
     try{
       const saved=await sbInsertLead(leadToDb(withStage));
       const newLead=saved&&saved[0]?dbToLead(saved[0]):{...withStage,id:Date.now()};
-      setLeadStage(newLead.id,firstStage?.id||"f1");
+      const stageId = firstStage?.id||(isReceptivo?"r1":"f1");
+      setLeadStage(newLead.id, stageId);
       // Insere entrada em lead_stages para que o funil do Dashboard contabilize
       try {
         await sbFetch("lead_stages","POST",{
           lead_id:   newLead.id,
-          stage_id:  firstStage?.id||"f1",
+          stage_id:  stageId,
           tenant_id: user?.tenant_id||null,
           entered_at: new Date().toISOString(),
         });
       } catch(e2){ console.warn("lead_stages insert failed:", e2.message); }
       setLeads(ls=>[newLead,...ls]);
-      notify("✅ "+newLead.name+" adicionado ao CRM e ao Funil");
+      notify("✅ "+newLead.name+" adicionado ao "+(isReceptivo?"Receptivo":"CRM e ao Funil"));
     }catch(e){
       // Fallback to local if Supabase fails
-      setLeadStage(lead.id,firstStage?.id||"f1");
+      const stageId = firstStage?.id||(isReceptivo?"r1":"f1");
+      setLeadStage(lead.id, stageId);
       setLeads(ls=>[withStage,...ls]);
       notify("✅ "+lead.name+" adicionado (offline)");
     }
