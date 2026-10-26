@@ -7145,7 +7145,14 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
                     const file = e.target.files[0];
                     if(!file) return;
                     try {
-                      const raw = await file.text();
+                      // Tenta UTF-8 primeiro; se tiver caracteres inválidos (Windows-1252/Excel), relê com latin1
+                      const tryDecode = async (f, enc) => {
+                        const buf = await f.arrayBuffer();
+                        return new TextDecoder(enc, {fatal: enc==="utf-8"}).decode(buf);
+                      };
+                      let raw;
+                      try { raw = await tryDecode(file,"utf-8"); }
+                      catch(_) { raw = await tryDecode(file,"windows-1252"); }
                       // Remove BOM (Excel UTF-8 com BOM)
                       const text = raw.replace(/^﻿/,"");
                       // Detecta separador (ponto-e-vírgula ou vírgula)
