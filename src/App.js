@@ -6667,6 +6667,14 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
       const dataDefault = form.data_agendamento && form.hora_agendamento
         ? new Date(form.data_agendamento+"T"+form.hora_agendamento+":00").toISOString()
         : null;
+      // Helper seguro para montar ISO datetime — retorna null se data inválida
+      const toISO = (date, hora) => {
+        if(!date) return null;
+        // date já deve estar no formato YYYY-MM-DD após parseDateBR
+        const isoStr = date+"T"+(hora||"08:00")+":00";
+        const d = new Date(isoStr);
+        return isNaN(d.getTime()) ? null : d.toISOString();
+      };
       const now = new Date().toISOString();
       const payload = lista.map(item => ({
         tenant_id: tenantId,
@@ -6675,9 +6683,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
         cpf_cnpj: item.cpf_cnpj||null,
         vendedor: item.vendedor||null,
         data_relacionamento: item.data_relacionamento||null,
-        data_agendamento: item.data_agendamento && item.hora_agendamento
-          ? new Date(item.data_agendamento+"T"+(item.hora_agendamento||"08:00")+":00").toISOString()
-          : dataDefault,
+        data_agendamento: toISO(item.data_agendamento, item.hora_agendamento) || dataDefault,
         status: "pendente",
         created_at: now,
       }));
@@ -7178,24 +7184,34 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
                         const idx = names.map(n=>header.indexOf(norm(n))).find(i=>i>=0);
                         return idx>=0 ? (cols[idx]||"").replace(/"/g,"").trim() : "";
                       };
-                      // Converte data BR (DD/MM/YYYY ou DD/MM/YYYY HH:MM) → YYYY-MM-DD
-                      const toISODate = (s) => {
-                        if(!s) return "";
-                        const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
-                        return m ? m[3]+"-"+m[2]+"-"+m[1] : s.slice(0,10);
+                      // Converte data BR (DD/MM/YYYY ou DD/MM/YYYY HH:MM) → {date:"YYYY-MM-DD", hora:"HH:MM"}
+                      const parseDateBR = (s) => {
+                        if(!s) return {date:"", hora:""};
+                        s = s.trim();
+                        // DD/MM/YYYY HH:MM ou DD/MM/YYYY HH:MM:SS
+                        const mFull = s.match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}:\d{2})/);
+                        if(mFull) return {date:mFull[3]+"-"+mFull[2]+"-"+mFull[1], hora:mFull[4]};
+                        // DD/MM/YYYY
+                        const mDate = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+                        if(mDate) return {date:mDate[3]+"-"+mDate[2]+"-"+mDate[1], hora:""};
+                        // já ISO YYYY-MM-DD
+                        return {date:s.slice(0,10), hora:""};
                       };
+                      const toISODate = (s) => parseDateBR(s).date;
                       const imported = rows.slice(1).filter(r=>r.trim()).map(row=>{
                         const cols = parseCSVRow(row);
                         const tel = getCol(cols,["telefone","celular","fone","phone","tel","whatsapp"]).replace(/\D/g,"");
+                        const rawAgend = getCol(cols,["data_agendamento","data_acionamento"]);
+                        const parsedAgend = parseDateBR(rawAgend);
                         return {
                           _id: Date.now()+Math.random(),
                           nome: getCol(cols,["nome","name","cliente","razao_social","razão social","razao social","razão_social","razao_social","razão_social"]),
                           telefone: tel,
                           cpf_cnpj: getCol(cols,["cpf","cnpj","cpf_cnpj","cpf/cnpj","documento"]),
                           vendedor: getCol(cols,["vendedor","seller","responsavel","responsável"])||form.vendedor,
-                          data_relacionamento: getCol(cols,["data_relacionamento","data relacionamento","data_rel","data de cadastro","data_cadastro","data"]),
-                          data_agendamento: toISODate(getCol(cols,["data_agendamento","data_acionamento"]))||form.data_agendamento,
-                          hora_agendamento: getCol(cols,["hora_agendamento","hora"])||form.hora_agendamento,
+                          data_relacionamento: toISODate(getCol(cols,["data_relacionamento","data relacionamento","data_rel","data de cadastro","data_cadastro","data"])),
+                          data_agendamento: parsedAgend.date||form.data_agendamento,
+                          hora_agendamento: parsedAgend.hora||getCol(cols,["hora_agendamento","hora"])||form.hora_agendamento,
                         };
                       }).filter(r=>r.nome&&r.telefone);
                       if(imported.length===0){ setError("Nenhum registro válido encontrado. Verifique se o CSV tem colunas 'nome' e 'telefone'."); return; }
