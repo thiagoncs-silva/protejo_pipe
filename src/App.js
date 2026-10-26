@@ -1727,7 +1727,7 @@ function DrillUsuarios({ srcLeads=[], users=[], isPosVenda=false, modTab="todos"
   );
 }
 
-function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=false, navPerms=null}) {
+function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=false, navPerms=null, externalLeadStages=null, onLeadStagesLoaded=null}) {
   const [modTab, setModTab] = useState("todos"); // todos | prospeccao | receptivo | pos_venda | reativacao | ativo
   const [posVendaData, setPosVendaData] = useState([]);
   const [leadStages, setLeadStages] = useState([]); // dados reais de lead_stages
@@ -1744,12 +1744,17 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
   },[tenantId]);
 
   // Carrega lead_stages do Supabase para montar funil real
+  // Se o App já passou externalLeadStages, usa ele diretamente (evita dupla request)
   useEffect(()=>{
+    if(externalLeadStages!==null){
+      setLeadStages(externalLeadStages);
+      return;
+    }
     if(!tenantId) return;
     sbFetch("lead_stages?tenant_id=eq."+tenantId+"&select=lead_id,stage_id,entered_at")
       .then(rows=>setLeadStages(Array.isArray(rows)?rows:[]))
       .catch(()=>{});
-  },[tenantId]);
+  },[tenantId, externalLeadStages]);
 
   // Carrega dados de pós-venda diretamente da tabela pos_venda (fonte correta)
   // Normaliza status_envio: valores do banco → padrão do app
@@ -7903,6 +7908,7 @@ export default function App() {
   const [viewAsTenant, setViewAsTenant] = useState(null); // {id, name, modules[]}
 
   const [leads,setLeads]=useState([]);
+  const [appLeadStages,setAppLeadStages]=useState([]); // lead_stages compartilhado entre App e Dashboard
   const [sbLoading,setSbLoading]=useState(true);
   const [sbError,setSbError]=useState("");
   const [pwaPrompt, setPwaPrompt] = useState(null);
@@ -7955,6 +7961,13 @@ export default function App() {
         } else {
           // Tenant autenticado sem leads — começa com lista vazia (sem mock)
           setLeads([]);
+        }
+        // Carrega lead_stages para funil do Dashboard
+        if(user?.tenant_id){
+          try {
+            const ls = await sbFetch("lead_stages?tenant_id=eq."+user.tenant_id+"&select=lead_id,stage_id,entered_at");
+            setAppLeadStages(Array.isArray(ls)?ls:[]);
+          } catch(e){ console.warn("lead_stages não carregado:", e.message); }
         }
         setSbError("");
       } catch(e){
@@ -8075,14 +8088,17 @@ export default function App() {
       const stageId = firstStage?.id||(isReceptivo?"r1":"f1");
       setLeadStage(newLead.id, stageId);
       // Insere entrada em lead_stages para que o funil do Dashboard contabilize
+      const lsEntry = {
+        lead_id:   newLead.id,
+        stage_id:  stageId,
+        tenant_id: user?.tenant_id||null,
+        entered_at: new Date().toISOString(),
+      };
       try {
-        await sbFetch("lead_stages","POST",{
-          lead_id:   newLead.id,
-          stage_id:  stageId,
-          tenant_id: user?.tenant_id||null,
-          entered_at: new Date().toISOString(),
-        });
+        await sbFetch("lead_stages","POST", lsEntry);
       } catch(e2){ console.warn("lead_stages insert failed:", e2.message); }
+      // Atualiza o estado local do App para que o Dashboard reflita imediatamente
+      setAppLeadStages(ls=>[...ls, lsEntry]);
       setLeads(ls=>[newLead,...ls]);
       notify("✅ "+newLead.name+" adicionado ao "+(isReceptivo?"Receptivo":"CRM e ao Funil"));
     }catch(e){
@@ -8193,7 +8209,7 @@ export default function App() {
   const presentGroups = [...new Set(nav.map(n=>n.group))];
   const groups = ["Principal","Comunicação","Gestão","Módulos","Master","Owner","Administração"].filter(g=>presentGroups.includes(g));
   const renderPage = (pg) => {
-    if(pg==="dashboard") return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} currentUser={user} isMaster={isMaster} navPerms={isOwner&&!viewAsTenant?null:(previewNavPerms||tenantNavPerms)}/>;
+    if(pg==="dashboard") return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} currentUser={user} isMaster={isMaster} navPerms={isOwner&&!viewAsTenant?null:(previewNavPerms||tenantNavPerms)} externalLeadStages={appLeadStages}/>;
     if(pg==="profile") return <CompanyProfile profile={profile} tenantId={user?.tenant_id} onSave={p=>{setProfile(p);notify("Perfil salvo!");}} />;
     if(pg==="search") return <SearchLeads onLeadsFound={addLead} onAddToProsp={addToProsp} existingLeads={leads} profile={profile} currentUser={user} ownerWebhook={ownerWebhooks.busca_leads||ownerWebhook}/>;
     if(pg==="addlead") return <AddLead onLeadsFound={addLead} existingLeads={leads} profile={profile}/>;
@@ -8213,7 +8229,7 @@ export default function App() {
       onViewAsTenant={(t)=>{ setViewAsTenant(t); setPage("dashboard"); }}
       onModulesUpdated={(tenantId, mods, cfg)=>{ setViewAsTenant(v=> v?.id===tenantId ? {...v,modules:mods,config:cfg} : v); }}
     />;
-    return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} currentUser={user} isMaster={isMaster} navPerms={isOwner&&!viewAsTenant?null:(previewNavPerms||tenantNavPerms)}/>;
+    return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} currentUser={user} isMaster={isMaster} navPerms={isOwner&&!viewAsTenant?null:(previewNavPerms||tenantNavPerms)} externalLeadStages={appLeadStages}/>;
   };
 
   // Guard: if current page not accessible, redirect to dashboard
