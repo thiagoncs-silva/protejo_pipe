@@ -7266,12 +7266,24 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
                   {lote.map(item=>(
                     <div key={item._id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:C.sidebar,borderRadius:8,border:"1px solid "+C.border}}>
                       <div style={{flex:1}}>
-                        <span style={{fontSize:12,fontWeight:700,color:C.text}}>{item.nome}</span>
-                        <span style={{fontSize:11,color:C.muted,marginLeft:8}}>{item.telefone}</span>
-                        {item.cpf_cnpj&&<span style={{fontSize:10,color:C.faint,marginLeft:8}}>{item.cpf_cnpj}</span>}
+                        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                          <span style={{fontSize:12,fontWeight:700,color:C.text}}>{item.nome}</span>
+                          <span style={{fontSize:11,color:C.muted}}>{item.telefone}</span>
+                          {item.cpf_cnpj&&<span style={{fontSize:10,color:C.faint}}>{item.cpf_cnpj}</span>}
+                        </div>
+                        <div style={{display:"flex",gap:10,marginTop:3,flexWrap:"wrap"}}>
+                          {(item.data_agendamento||form.data_agendamento)&&(
+                            <span style={{fontSize:10,color:C.accent}}>
+                              📅 {item.data_agendamento||form.data_agendamento} {item.hora_agendamento||form.hora_agendamento}
+                            </span>
+                          )}
+                          {item.data_relacionamento&&(
+                            <span style={{fontSize:10,color:C.faint}}>🤝 {item.data_relacionamento}</span>
+                          )}
+                        </div>
                       </div>
                       <button onClick={()=>setLote(l=>l.filter(x=>x._id!==item._id))}
-                        style={{background:"transparent",border:"none",color:"#F87171",cursor:"pointer",fontSize:14}}>✕</button>
+                        style={{background:"transparent",border:"none",color:"#F87171",cursor:"pointer",fontSize:14,flexShrink:0}}>✕</button>
                     </div>
                   ))}
                 </div>
