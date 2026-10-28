@@ -121,6 +121,7 @@ const dbToLead = (r) => ({
   module: r.module||"prospeccao",
   pos_venda_id: r.pos_venda_id||null,
   responsible: r.responsible||"",
+  meeting_at: r.meeting_at||null,
   next_contact: r.next_contact||"",
   last_contact_at: r.last_contact_at||"",
   health_score: r.health_score||0,
@@ -150,6 +151,8 @@ const leadToDb = (l) => ({
   business_hours: l.business_hours||"",
   tenant_id: l.tenant_id||null,
   module: l.module||"prospeccao",
+  responsible: l.responsible||null,
+  meeting_at: l.meeting_at||null,
 });
 
 
@@ -1762,6 +1765,8 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
     "Enviado":         "Enviado",
     "Em conversa":     "Respondeu",
     "Agendou reunião": "Agendou reunião",
+    "Proposta":        "Proposta",
+    "Fechado":         "Fechado",
     "Sem resposta":    "Sem resposta",
     "Erro":            "Erro",
   }[s] || (s ? s : "Enviado"));
@@ -1803,6 +1808,8 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
       "Enviado":         "enviado",
       "Respondeu":       "em_conversa",
       "Agendou reunião": "agendou",
+      "Proposta":        "proposta",
+      "Fechado":         "fechado",
       "Sem resposta":    "sem_resposta",
       "Erro":            "erro",
     };
@@ -1975,6 +1982,151 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
         />
       </div>
 
+      {/* ── Leads por Dia — linha própria ───────────────────────────────── */}
+      {(()=>{
+        const srcLeads = isPosVenda ? posLeads : fl;
+        const days = [];
+        for(let i=6;i>=0;i--){
+          const d = new Date(); d.setDate(d.getDate()-i);
+          const label = d.toLocaleDateString("pt-BR",{weekday:"short",day:"2-digit"});
+          const key = d.toDateString();
+          const count = isPosVenda
+            ? srcLeads.filter(l=>{const dt=l.data_envio||l.created_at; return dt&&new Date(dt).toDateString()===key;}).length
+            : srcLeads.filter(l=>l.createdAt&&new Date(l.createdAt).toDateString()===key).length;
+          days.push({label,count});
+        }
+        const maxD = Math.max(...days.map(d=>d.count),1);
+        const total7 = days.reduce((s,d)=>s+d.count,0);
+        const media = Math.round(total7/7*10)/10;
+        return (
+          <div style={{...card({marginTop:4,marginBottom:16})}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18}}>
+              <div>
+                <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase"}}>
+                  📈 Leads por Dia — {modTab==="todos"?"Geral":modTab==="prospeccao"?"Prospecção":modTab==="receptivo"?"Receptivo":modTab==="pos_venda"?"Pós-venda":"Reativação"}
+                </div>
+                <div style={{fontSize:10,color:C.faint,marginTop:2}}>Últimos 7 dias</div>
+              </div>
+              <div style={{display:"flex",gap:20}}>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:22,fontWeight:900,color:C.accent,lineHeight:1}}>{total7}</div>
+                  <div style={{fontSize:9,color:C.faint}}>total</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:22,fontWeight:900,color:C.muted,lineHeight:1}}>{media}</div>
+                  <div style={{fontSize:9,color:C.faint}}>média/dia</div>
+                </div>
+              </div>
+            </div>
+            <div style={{display:"flex",alignItems:"flex-end",gap:8,height:110,marginBottom:10}}>
+              {days.map((d,i)=>(
+                <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                  <div style={{fontSize:11,color:C.accent,fontWeight:700,minHeight:16}}>{d.count>0?d.count:""}</div>
+                  <div style={{width:"100%",background:d.count>0?C.accent:C.border,borderRadius:"4px 4px 0 0",
+                    height:maxD>0?Math.max(4,(d.count/maxD)*80)+"px":"4px",
+                    opacity:d.count>0?1:0.25,transition:"height 0.4s ease",position:"relative"}}>
+                    {d.count===Math.max(...days.map(x=>x.count))&&d.count>0&&(
+                      <div style={{position:"absolute",top:-18,left:"50%",transform:"translateX(-50%)",fontSize:8,color:"#F59E0B",fontWeight:900}}>★</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              {days.map((d,i)=>(
+                <div key={i} style={{flex:1,textAlign:"center",fontSize:9,color:C.faint,lineHeight:1.3}}>{d.label}</div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Ranking + Próximas Reuniões — lado a lado ───────────────────── */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:4}}>
+
+        {/* 1. Ranking Vendedores por Reuniões */}
+        {(()=>{
+          const srcLeads = isPosVenda ? posLeads : fl;
+          // Conta leads em stage "Agendou reunião" por responsável
+          const rankMap = {};
+          srcLeads.forEach(l=>{
+            const isAgendado = isPosVenda
+              ? (l.status_envio==="Agendou reunião")
+              : (l.status==="Agendou reunião" || l.funilStage==="r2c" || l.funilStage==="agendou_reuniao" || l.funilStage==="agendou");
+            if(isAgendado){
+              const resp = l.responsible || l.vendedor || "Sem responsável";
+              rankMap[resp]=(rankMap[resp]||0)+1;
+            }
+          });
+          const rank = Object.entries(rankMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
+          const maxR = rank.length ? rank[0][1] : 1;
+          return (
+            <div style={card()}>
+              <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>
+                🏆 Vendedor com mais Reuniões
+              </div>
+              {rank.length===0
+                ? <div style={{fontSize:12,color:C.faint,textAlign:"center",paddingTop:20}}>Nenhuma reunião agendada</div>
+                : rank.map(([name,count],i)=>(
+                  <div key={name} style={{marginBottom:10}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                      <span style={{fontSize:11,color:C.text,fontWeight:i===0?700:400}}>
+                        {i===0?"🥇":i===1?"🥈":i===2?"🥉":"  "} {name}
+                      </span>
+                      <span style={{fontSize:11,fontWeight:700,color:i===0?"#F59E0B":C.muted}}>{count}</span>
+                    </div>
+                    <div style={{height:4,background:C.border,borderRadius:4,overflow:"hidden"}}>
+                      <div style={{height:"100%",width:Math.round((count/maxR)*100)+"%",background:i===0?"#F59E0B":i===1?"#94A3B8":"#CD7F32",borderRadius:4}}/>
+                    </div>
+                  </div>
+                ))
+              }
+            </div>
+          );
+        })()}
+
+        {/* 2. Próximas Reuniões */}
+        {(()=>{
+          const srcLeads = isPosVenda ? posLeads : fl;
+          const now = new Date();
+          const in7days = new Date(now.getTime()+7*24*60*60*1000);
+          const upcoming = srcLeads
+            .filter(l=>{
+              const mt = l.meeting_at||l.data_reuniao;
+              if(!mt) return false;
+              const d = new Date(mt);
+              return d>=now && d<=in7days;
+            })
+            .sort((a,b)=>new Date(a.meeting_at||a.data_reuniao)-new Date(b.meeting_at||b.data_reuniao))
+            .slice(0,5);
+          const fmtDate = (s) => {
+            if(!s) return "";
+            const d = new Date(s);
+            return d.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"})+" "+d.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
+          };
+          return (
+            <div style={card()}>
+              <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>
+                📅 Próximas Reuniões (7 dias)
+              </div>
+              {upcoming.length===0
+                ? <div style={{fontSize:12,color:C.faint,textAlign:"center",paddingTop:20}}>Nenhuma reunião nos próximos 7 dias</div>
+                : upcoming.map((l,i)=>(
+                  <div key={l.id||i} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"8px 0",borderBottom:i<upcoming.length-1?"1px solid "+C.border:"none"}}>
+                    <div style={{minWidth:36,height:36,borderRadius:8,background:"#10B98122",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>📅</div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:11,fontWeight:700,color:C.text,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{l.name||l.company||"—"}</div>
+                      <div style={{fontSize:10,color:"#10B981",fontWeight:600}}>{fmtDate(l.meeting_at||l.data_reuniao)}</div>
+                      {(l.responsible||l.vendedor)&&<div style={{fontSize:9,color:C.faint}}>👤 {l.responsible||l.vendedor}</div>}
+                    </div>
+                  </div>
+                ))
+              }
+            </div>
+          );
+        })()}
+
+      </div> {/* fim grid 1fr 1fr */}
     </div>
   );
 }
@@ -4319,6 +4471,10 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ name:"", canal:"WhatsApp", phone:"", email:"", notes:"", origem:"" });
   const [selLead, setSelLead] = useState(null);
+  const [meetingModal, setMeetingModal] = useState(null); // {lead, stageId}
+  const [meetingForm, setMeetingForm] = useState({ meeting_at_date:"", meeting_at_time:"", responsible:"" });
+  const [expandedCols, setExpandedCols] = useState({});
+  const toggleCol = (key) => setExpandedCols(p=>({...p,[key]:!p[key]}));
 
   // Filter only receptivo leads
   const recLeads = leads.filter(l=>l.module==="receptivo");
@@ -4363,7 +4519,34 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
 
   const updateStage = (lead, stageId) => {
     const stage = RECEPTIVO_STAGES.find(s=>s.id===stageId);
+    if(stageId==="r2c") {
+      // Agendou reunião — abre modal para capturar data e responsável
+      setMeetingModal({lead, stageId});
+      setMeetingForm({
+        meeting_at_date: "",
+        meeting_at_time: "",
+        responsible: currentUser?.name||currentUser?.email||"",
+      });
+      return;
+    }
     onUpdateLead({...lead, funilStage:stageId, status:stage?.name||lead.status});
+  };
+
+  const confirmMeeting = () => {
+    if(!meetingModal) return;
+    const {lead, stageId} = meetingModal;
+    const stage = RECEPTIVO_STAGES.find(s=>s.id===stageId);
+    const meeting_at = meetingForm.meeting_at_date
+      ? (meetingForm.meeting_at_date+"T"+(meetingForm.meeting_at_time||"08:00")+":00")
+      : null;
+    onUpdateLead({
+      ...lead,
+      funilStage: stageId,
+      status: stage?.name||lead.status,
+      meeting_at,
+      responsible: meetingForm.responsible||lead.responsible||"",
+    });
+    setMeetingModal(null);
   };
 
   // Hours since created
@@ -4459,41 +4642,49 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
         <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8}}>
           {RECEPTIVO_STAGES.filter(s=>s.id!=="r6").map(stage=>{
             const stageLeads = recLeads.filter(l=>l.status===stage.name||l.funilStage===stage.id);
+            const colKey = "rec_"+stage.id;
+            const expanded = !!expandedCols[colKey];
             return (
               <div key={stage.id} style={{minWidth:220,flex:"0 0 220px"}}>
-                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,padding:"8px 12px",background:stage.color+"18",borderRadius:8,border:"1px solid "+stage.color+"33"}}>
+                {/* Header clicável — sempre visível */}
+                <div onClick={()=>toggleCol(colKey)}
+                  style={{display:"flex",alignItems:"center",gap:6,marginBottom:expanded?10:0,padding:"8px 12px",background:stage.color+"18",borderRadius:8,border:"1px solid "+stage.color+"33",cursor:"pointer",userSelect:"none"}}>
                   <span>{stage.icon}</span>
                   <span style={{fontSize:12,fontWeight:700,color:stage.color}}>{stage.name}</span>
                   <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:stage.color,background:stage.color+"22",padding:"1px 8px",borderRadius:20}}>{stageLeads.length}</span>
+                  <span style={{fontSize:10,color:stage.color,opacity:0.7,marginLeft:4}}>{expanded?"▲":"▼"}</span>
                 </div>
-                <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                  {stageLeads.map(l=>(
-                    <div key={l.id} onClick={()=>setSelLead(l)}
-                      style={{...card({padding:12}),border:"1px solid "+(isUrgent(l)?"#F87171":C.border),cursor:"pointer",transition:"all 0.15s"}}
-                      onMouseEnter={e=>e.currentTarget.style.borderColor=stage.color}
-                      onMouseLeave={e=>e.currentTarget.style.borderColor=isUrgent(l)?"#F87171":C.border}>
-                      {isUrgent(l)&&<div style={{fontSize:9,color:"#F87171",fontWeight:700,marginBottom:4}}>⚠️ URGENTE — sem resposta</div>}
-                      <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:4}}>{l.name}</div>
-                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
-                        <span style={{fontSize:9,color:"#fff",background:l.canal==="WhatsApp"?"#25D366":l.canal==="Formulário"?"#6366F1":"#F59E0B",padding:"1px 7px",borderRadius:20,fontWeight:700}}>{l.canal||l.channel||"—"}</span>
-                        <span style={{fontSize:9,color:C.faint}}>{hoursAgo(l.createdAt)}</span>
+                {/* Cards — só aparecem quando expandido */}
+                {expanded&&(
+                  <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:8}}>
+                    {stageLeads.map(l=>(
+                      <div key={l.id} onClick={()=>setSelLead(l)}
+                        style={{...card({padding:12}),border:"1px solid "+(isUrgent(l)?"#F87171":C.border),cursor:"pointer",transition:"all 0.15s"}}
+                        onMouseEnter={e=>e.currentTarget.style.borderColor=stage.color}
+                        onMouseLeave={e=>e.currentTarget.style.borderColor=isUrgent(l)?"#F87171":C.border}>
+                        {isUrgent(l)&&<div style={{fontSize:9,color:"#F87171",fontWeight:700,marginBottom:4}}>⚠️ URGENTE — sem resposta</div>}
+                        <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:4}}>{l.name}</div>
+                        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+                          <span style={{fontSize:9,color:"#fff",background:l.canal==="WhatsApp"?"#25D366":l.canal==="Formulário"?"#6366F1":"#F59E0B",padding:"1px 7px",borderRadius:20,fontWeight:700}}>{l.canal||l.channel||"—"}</span>
+                          <span style={{fontSize:9,color:C.faint}}>{hoursAgo(l.createdAt)}</span>
+                        </div>
+                        {l.notes&&<div style={{fontSize:10,color:C.dim,fontStyle:"italic"}}>{l.notes.substring(0,50)}{l.notes.length>50?"...":""}</div>}
+                        <div style={{marginTop:8}}>
+                          <select value={l.funilStage||"r1"} onClick={e=>e.stopPropagation()}
+                            onChange={e=>updateStage(l,e.target.value)}
+                            style={{...inp,fontSize:10,padding:"3px 6px",width:"100%"}}>
+                            {RECEPTIVO_STAGES.map(s=>(
+                              <option key={s.id} value={s.id}>{s.icon} {s.name}</option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
-                      {l.notes&&<div style={{fontSize:10,color:C.dim,fontStyle:"italic"}}>{l.notes.substring(0,50)}{l.notes.length>50?"...":""}</div>}
-                      <div style={{marginTop:8}}>
-                        <select value={l.funilStage||"r1"} onClick={e=>e.stopPropagation()}
-                          onChange={e=>updateStage(l,e.target.value)}
-                          style={{...inp,fontSize:10,padding:"3px 6px",width:"100%"}}>
-                          {RECEPTIVO_STAGES.map(s=>(
-                            <option key={s.id} value={s.id}>{s.icon} {s.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  ))}
-                  {stageLeads.length===0&&(
-                    <div style={{padding:"16px 8px",textAlign:"center",color:C.faint,fontSize:11,border:"1px dashed "+C.border,borderRadius:8}}>Vazio</div>
-                  )}
-                </div>
+                    ))}
+                    {stageLeads.length===0&&(
+                      <div style={{padding:"16px 8px",textAlign:"center",color:C.faint,fontSize:11,border:"1px dashed "+C.border,borderRadius:8}}>Vazio</div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -5937,6 +6128,40 @@ function Reativacao({ leads, onUpdateLead, onSetPage }) {
           </div>
         </div>
       )}
+
+      {/* Modal — Agendou Reunião */}
+      {meetingModal&&(
+        <div style={{position:"fixed",inset:0,zIndex:600,background:"rgba(6,14,28,0.85)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+          onClick={()=>setMeetingModal(null)}>
+          <div style={{background:C.panel,border:"1px solid "+C.border,borderRadius:16,padding:24,width:"100%",maxWidth:380,boxShadow:"0 24px 64px rgba(0,0,0,0.6)"}}
+            onClick={e=>e.stopPropagation()}>
+            <div style={{fontSize:16,fontWeight:700,color:"#10B981",marginBottom:4}}>📅 Agendou Reunião</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:18}}>{meetingModal.lead?.name}</div>
+            <div style={{marginBottom:14}}>
+              <div style={lbl}>Data da reunião</div>
+              <input type="date" value={meetingForm.meeting_at_date}
+                onChange={e=>setMeetingForm(f=>({...f,meeting_at_date:e.target.value}))}
+                style={{...inp,width:"100%"}}/>
+            </div>
+            <div style={{marginBottom:14}}>
+              <div style={lbl}>Horário</div>
+              <input type="time" value={meetingForm.meeting_at_time}
+                onChange={e=>setMeetingForm(f=>({...f,meeting_at_time:e.target.value}))}
+                style={{...inp,width:"100%"}}/>
+            </div>
+            <div style={{marginBottom:20}}>
+              <div style={lbl}>Responsável pelo atendimento</div>
+              <input type="text" placeholder="Nome do vendedor" value={meetingForm.responsible}
+                onChange={e=>setMeetingForm(f=>({...f,responsible:e.target.value}))}
+                style={{...inp,width:"100%"}}/>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>setMeetingModal(null)} style={{...btnG,flex:1}}>Cancelar</button>
+              <button onClick={confirmMeeting} style={{...btnP,flex:1,background:"linear-gradient(135deg,#10B981,#059669)"}}>✅ Confirmar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -5967,6 +6192,10 @@ function Prospeccao({ currentUser, onAddToProsp }) {
     name:"", company:"", phone:"", email:"",
     channel:"whatsapp", notes:"", city:"",
   });
+  const [meetingModal, setMeetingModal] = useState(null); // {lead, stageId}
+  const [meetingForm, setMeetingForm] = useState({ meeting_at_date:"", meeting_at_time:"", responsible:"" });
+  const [expandedCols, setExpandedCols] = useState({});
+  const toggleCol = (key) => setExpandedCols(p=>({...p,[key]:!p[key]}));
 
   const tenantId = currentUser?.tenant_id || "072b33d2-46ff-4bf2-839b-ee5d33fe6cb7";
   const f = (k,v) => setForm(p=>({...p,[k]:v}));
@@ -6000,17 +6229,43 @@ function Prospeccao({ currentUser, onAddToProsp }) {
   const getStageId = (l) => latestStageMap[l.id]?.stage_id || PROSP_STAGES[0].id;
   const getStage   = (l) => PROSP_STAGES.find(s=>s.id===getStageId(l)) || PROSP_STAGES[0];
 
-  const moveStage = async (lead, stageId) => {
+  const moveStage = async (lead, stageId, extra={}) => {
+    if(stageId==="agendou_reuniao" && !extra._fromModal) {
+      setMeetingModal({lead, stageId});
+      setMeetingForm({
+        meeting_at_date: "",
+        meeting_at_time: "",
+        responsible: currentUser?.name||currentUser?.email||"",
+      });
+      return;
+    }
     const stage = PROSP_STAGES.find(s=>s.id===stageId);
+    const patch = {status:stage?.name||stageId};
+    if(extra.meeting_at) patch.meeting_at = extra.meeting_at;
+    if(extra.responsible) patch.responsible = extra.responsible;
     try {
-      await sbFetch("leads?id=eq."+lead.id+"&tenant_id=eq."+tenantId,"PATCH",{status:stage?.name||stageId});
+      await sbFetch("leads?id=eq."+lead.id+"&tenant_id=eq."+tenantId,"PATCH",patch);
       await sbFetch("lead_stages","POST",{
         lead_id:lead.id, stage_id:stageId,
         entered_at:new Date().toISOString(), tenant_id:tenantId, actions_done:[]
       });
-      setLeads(ls=>ls.map(l=>l.id===lead.id?{...l,status:stage?.name||stageId}:l));
+      setLeads(ls=>ls.map(l=>l.id===lead.id?{...l,status:stage?.name||stageId,...patch}:l));
       setLeadStages(ls=>[...ls,{lead_id:lead.id,stage_id:stageId,entered_at:new Date().toISOString(),tenant_id:tenantId}]);
     } catch(e){}
+  };
+
+  const confirmMeetingProsp = async () => {
+    if(!meetingModal) return;
+    const {lead, stageId} = meetingModal;
+    const meeting_at = meetingForm.meeting_at_date
+      ? (meetingForm.meeting_at_date+"T"+(meetingForm.meeting_at_time||"08:00")+":00")
+      : null;
+    await moveStage(lead, stageId, {
+      _fromModal: true,
+      meeting_at,
+      responsible: meetingForm.responsible,
+    });
+    setMeetingModal(null);
   };
 
   const buildPayload = (data) => ({
@@ -6112,38 +6367,46 @@ function Prospeccao({ currentUser, onAddToProsp }) {
         <div style={{display:"flex",gap:10,overflowX:"auto",paddingBottom:8,alignItems:"start"}}>
           {PROSP_STAGES.map(stage=>{
             const cols = visLeads.filter(l=>getStageId(l)===stage.id);
+            const colKey = "prosp_"+stage.id;
+            const expanded = !!expandedCols[colKey];
             return (
               <div key={stage.id} style={{minWidth:180,flex:"0 0 180px"}}>
-                <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:8,padding:"7px 9px",background:stage.color+"14",border:"1px solid "+stage.color+"30",borderRadius:8}}>
+                {/* Header clicável — sempre visível */}
+                <div onClick={()=>toggleCol(colKey)}
+                  style={{display:"flex",alignItems:"center",gap:5,marginBottom:expanded?8:0,padding:"7px 9px",background:stage.color+"14",border:"1px solid "+stage.color+"30",borderRadius:8,cursor:"pointer",userSelect:"none"}}>
                   <span style={{fontSize:13}}>{stage.icon}</span>
                   <span style={{fontSize:11,fontWeight:700,color:stage.color,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{stage.name}</span>
                   <span style={{fontSize:9,fontWeight:900,color:"#fff",background:stage.color,borderRadius:20,padding:"1px 6px"}}>{cols.length}</span>
+                  <span style={{fontSize:9,color:stage.color,opacity:0.7,marginLeft:2}}>{expanded?"▲":"▼"}</span>
                 </div>
-                <div style={{display:"flex",flexDirection:"column",gap:7}}>
-                  {cols.length===0&&<div style={{...card({padding:12}),textAlign:"center",color:C.faint,fontSize:10}}>Vazio</div>}
-                  {cols.map(l=>{
-                    const chColor=CHANNEL_COLOR[l.channel]||C.muted;
-                    return (
-                      <div key={l.id} onClick={()=>setSel(l)}
-                        style={{...card({padding:10}),cursor:"pointer",transition:"transform 0.1s,box-shadow 0.1s"}}
-                        onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 8px 24px rgba(0,0,0,0.3)";}}
-                        onMouseLeave={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow="";}}>
-                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
-                          <span style={{fontSize:9,color:chColor,background:chColor+"18",padding:"2px 6px",borderRadius:20,fontWeight:700}}>{l.channel||"whatsapp"}</span>
-                          <span style={{fontSize:9,color:C.faint}}>{timeAgo(l.created_at)}</span>
+                {/* Cards — só aparecem quando expandido */}
+                {expanded&&(
+                  <div style={{display:"flex",flexDirection:"column",gap:7,marginTop:8}}>
+                    {cols.length===0&&<div style={{...card({padding:12}),textAlign:"center",color:C.faint,fontSize:10,border:"1px dashed "+C.border}}>Vazio</div>}
+                    {cols.map(l=>{
+                      const chColor=CHANNEL_COLOR[l.channel]||C.muted;
+                      return (
+                        <div key={l.id} onClick={()=>setSel(l)}
+                          style={{...card({padding:10}),cursor:"pointer",transition:"transform 0.1s,box-shadow 0.1s"}}
+                          onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 8px 24px rgba(0,0,0,0.3)";}}
+                          onMouseLeave={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow="";}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                            <span style={{fontSize:9,color:chColor,background:chColor+"18",padding:"2px 6px",borderRadius:20,fontWeight:700}}>{l.channel||"whatsapp"}</span>
+                            <span style={{fontSize:9,color:C.faint}}>{timeAgo(l.created_at)}</span>
+                          </div>
+                          <div style={{fontSize:11,fontWeight:700,color:C.text,marginBottom:2}}>{l.name||l.company}</div>
+                          <div style={{fontSize:10,color:C.muted,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.company||"—"}</div>
+                          {l.city&&<div style={{fontSize:9,color:C.faint,marginBottom:7}}>📍 {l.city}</div>}
+                          <select value={getStageId(l)} onChange={e=>{e.stopPropagation();moveStage(l,e.target.value);}}
+                            onClick={e=>e.stopPropagation()}
+                            style={{width:"100%",fontSize:9,background:C.bg,border:"1px solid "+C.border,borderRadius:6,color:C.muted,padding:"3px 4px",cursor:"pointer"}}>
+                            {PROSP_STAGES.map(s=><option key={s.id} value={s.id}>{s.icon} {s.name}</option>)}
+                          </select>
                         </div>
-                        <div style={{fontSize:11,fontWeight:700,color:C.text,marginBottom:2}}>{l.name||l.company}</div>
-                        <div style={{fontSize:10,color:C.muted,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.company||"—"}</div>
-                        {l.city&&<div style={{fontSize:9,color:C.faint,marginBottom:7}}>📍 {l.city}</div>}
-                        <select value={getStageId(l)} onChange={e=>{e.stopPropagation();moveStage(l,e.target.value);}}
-                          onClick={e=>e.stopPropagation()}
-                          style={{width:"100%",fontSize:9,background:C.bg,border:"1px solid "+C.border,borderRadius:6,color:C.muted,padding:"3px 4px",cursor:"pointer"}}>
-                          {PROSP_STAGES.map(s=><option key={s.id} value={s.id}>{s.icon} {s.name}</option>)}
-                        </select>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -6529,6 +6792,40 @@ function Suporte({ leads, onUpdateLead, currentUser }) {
           </div>
         </div>
       )}
+
+      {/* Modal — Agendou Reunião (Prospecção) */}
+      {meetingModal&&(
+        <div style={{position:"fixed",inset:0,zIndex:600,background:"rgba(6,14,28,0.85)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+          onClick={()=>setMeetingModal(null)}>
+          <div style={{background:C.panel,border:"1px solid "+C.border,borderRadius:16,padding:24,width:"100%",maxWidth:380,boxShadow:"0 24px 64px rgba(0,0,0,0.6)"}}
+            onClick={e=>e.stopPropagation()}>
+            <div style={{fontSize:16,fontWeight:700,color:"#10B981",marginBottom:4}}>📅 Agendou Reunião</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:18}}>{meetingModal.lead?.name||meetingModal.lead?.company}</div>
+            <div style={{marginBottom:14}}>
+              <div style={lbl}>Data da reunião</div>
+              <input type="date" value={meetingForm.meeting_at_date}
+                onChange={e=>setMeetingForm(f=>({...f,meeting_at_date:e.target.value}))}
+                style={{...inp,width:"100%"}}/>
+            </div>
+            <div style={{marginBottom:14}}>
+              <div style={lbl}>Horário</div>
+              <input type="time" value={meetingForm.meeting_at_time}
+                onChange={e=>setMeetingForm(f=>({...f,meeting_at_time:e.target.value}))}
+                style={{...inp,width:"100%"}}/>
+            </div>
+            <div style={{marginBottom:20}}>
+              <div style={lbl}>Responsável pelo atendimento</div>
+              <input type="text" placeholder="Nome do vendedor" value={meetingForm.responsible}
+                onChange={e=>setMeetingForm(f=>({...f,responsible:e.target.value}))}
+                style={{...inp,width:"100%"}}/>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>setMeetingModal(null)} style={{...btnG,flex:1}}>Cancelar</button>
+              <button onClick={confirmMeetingProsp} style={{...btnP,flex:1,background:"linear-gradient(135deg,#10B981,#059669)"}}>✅ Confirmar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -6540,6 +6837,8 @@ const PV_STAGES = [
   {id:"enviado",      name:"Enviado",             color:"#3B82F6", icon:"📤"},
   {id:"em_conversa",  name:"Respondeu",           color:"#F59E0B", icon:"💬"},
   {id:"agendou",      name:"Agendou reunião",     color:"#10B981", icon:"📅"},
+  {id:"proposta",     name:"Proposta",            color:"#8B5CF6", icon:"📋"},
+  {id:"fechado",      name:"Fechado",             color:"#4ADE80", icon:"✅"},
   {id:"sem_resposta", name:"Sem resposta",        color:"#94A3B8", icon:"🔕"},
   {id:"erro",         name:"Erro no acionamento", color:"#EF4444", icon:"⚠️"},
 ];
@@ -6733,8 +7032,8 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
   const txResposta  = enviados>0?Math.round((responderam/enviados)*100):0;
 
   // Todos os status possíveis — agenda + pos_venda
-  const PV_STATUS = ["Aguardando","Erro","Agendado","Enviado","Respondeu","Agendou reunião","Sem resposta"];
-  const PV_STATUS_EDITAVEIS = ["Enviado","Respondeu","Agendou reunião","Sem resposta","Erro"]; // pos_venda — Erro = falha no acionamento
+  const PV_STATUS = ["Aguardando","Erro","Agendado","Enviado","Respondeu","Agendou reunião","Proposta","Fechado","Sem resposta"];
+  const PV_STATUS_EDITAVEIS = ["Enviado","Respondeu","Agendou reunião","Proposta","Fechado","Sem resposta","Erro"]; // pos_venda — Erro = falha no acionamento
   const FILTROS = [
     {id:"todos", label:"Todos", count:total},
     ...PV_STATUS.map(s=>({id:s,label:s,count:clientes.filter(c=>(c.status_envio||"Aguardando")===s).length})),
@@ -6742,8 +7041,8 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
 
   // Metadados visuais de cada status
   const pvMeta = (st) => ({
-    color: st==="Aguardando"?"#6B7280":st==="Erro"?"#EF4444":st==="Agendado"?"#8B5CF6":st==="Enviado"?"#3B82F6":st==="Respondeu"?"#F59E0B":st==="Agendou reunião"?"#10B981":"#F87171",
-    icon:  st==="Aguardando"?"⏳":st==="Erro"?"⚠️":st==="Agendado"?"🕐":st==="Enviado"?"📤":st==="Respondeu"?"💬":st==="Agendou reunião"?"📅":"🔕",
+    color: st==="Aguardando"?"#6B7280":st==="Erro"?"#EF4444":st==="Agendado"?"#8B5CF6":st==="Enviado"?"#3B82F6":st==="Respondeu"?"#F59E0B":st==="Agendou reunião"?"#10B981":st==="Proposta"?"#A78BFA":st==="Fechado"?"#4ADE80":"#F87171",
+    icon:  st==="Aguardando"?"⏳":st==="Erro"?"⚠️":st==="Agendado"?"🕐":st==="Enviado"?"📤":st==="Respondeu"?"💬":st==="Agendou reunião"?"📅":st==="Proposta"?"📋":st==="Fechado"?"✅":"🔕",
   });
 
   // ── Funil kanban — agrupa por status_envio (inclui Agendado e Erro da agenda) ─
@@ -7022,7 +7321,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
       {/* Modal detalhe cliente */}
       {sel&&(()=>{
         const selStatus = sel.status_envio||"Aguardando";
-        const selColor  = selStatus==="Aguardando"?"#6B7280":selStatus==="Erro"?"#EF4444":selStatus==="Agendado"?"#8B5CF6":selStatus==="Enviado"?"#3B82F6":selStatus==="Respondeu"?"#F59E0B":selStatus==="Agendou reunião"?"#10B981":"#F87171";
+        const selColor  = pvMeta(selStatus).color;
         return (
           <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(6,14,28,0.85)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
             onClick={()=>setSel(null)}>
@@ -7055,7 +7354,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
                 <div style={{display:"flex",flexDirection:"column",gap:5}}>
                   {(sel._source ? PV_STATUS : PV_STATUS_EDITAVEIS).map(st=>{
                     const active=selStatus===st;
-                    const stColor2=st==="Aguardando"?"#6B7280":st==="Erro"?"#EF4444":st==="Agendado"?"#8B5CF6":st==="Enviado"?"#3B82F6":st==="Respondeu"?"#F59E0B":st==="Agendou reunião"?"#10B981":"#F87171";
+                    const stColor2=pvMeta(st).color;
                     return (
                       <div key={st} onClick={()=>updateStatus(sel,st)}
                         style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,cursor:sel._source?"default":"pointer",border:"1px solid "+(active?stColor2:C.border),background:active?(stColor2+"12"):"transparent",transition:"all 0.15s",opacity:sel._source?0.6:1}}>
