@@ -81,11 +81,11 @@ const sbFetch = async (path, method="GET", body=null, extraHeaders={}) => {
 // ── Supabase helpers ──────────────────────────────────────────────────────────
 const sbGetLeads = (tenantId, module=null) => sbFetch("leads?select=*&order=created_at.desc"+(tenantId?"&tenant_id=eq."+tenantId:"")+(module?"&module=eq."+module:""));
 const sbInsertLead = (lead) => sbFetch("leads", "POST", lead, {"Prefer":"return=representation"});
-const sbUpdateLead = (id, patch) => sbFetch("leads?id=eq."+id, "PATCH", patch);
-const sbDeleteLead = (id) => sbFetch("leads?id=eq."+id, "DELETE");
+const sbUpdateLead = (id, patch, tenantId) => sbFetch("leads?id=eq."+id+(tenantId?"&tenant_id=eq."+tenantId:""), "PATCH", patch);
+const sbDeleteLead = (id, tenantId) => sbFetch("leads?id=eq."+id+(tenantId?"&tenant_id=eq."+tenantId:""), "DELETE");
 const sbUpsertGoal = (goal) => sbFetch("goals", "POST", goal, {"Prefer":"resolution=merge-duplicates,return=representation"});
 const sbGetGoals = (tenantId) => sbFetch("goals?select=*"+(tenantId?"&tenant_id=eq."+tenantId:""));
-const sbGetLeadStages = () => sbFetch("lead_stages?select=*");
+const sbGetLeadStages = (tenantId) => sbFetch("lead_stages?select=*"+(tenantId?"&tenant_id=eq."+tenantId:""));
 const sbUpsertLeadStage = (ls) => sbFetch("lead_stages", "POST", ls);
 const sbInsertCadence = (entry) => sbFetch("cadence", "POST", entry);
 const sbGetCadencias = (tenantId) => sbFetch("cadences?select=*&order=created_at.asc"+(tenantId?"&tenant_id=eq."+tenantId:""));
@@ -6422,10 +6422,11 @@ function Prospeccao({ currentUser, onAddToProsp }) {
   const [expandedCols, setExpandedCols] = useState(initProspCols);
   const toggleCol = (key) => setExpandedCols(p=>({...p,[key]:!p[key]}));
 
-  const tenantId = currentUser?.tenant_id || "072b33d2-46ff-4bf2-839b-ee5d33fe6cb7";
+  const tenantId = currentUser?.tenant_id;
   const f = (k,v) => setForm(p=>({...p,[k]:v}));
 
   const load = async () => {
+    if(!tenantId){ setLeads([]); setLoading(false); return; }
     setLoading(true);
     try {
       const [rows, stages] = await Promise.all([
@@ -6439,7 +6440,7 @@ function Prospeccao({ currentUser, onAddToProsp }) {
     finally { setLoading(false); }
   };
 
-  useEffect(()=>{ load(); },[]);
+  useEffect(()=>{ load(); },[tenantId]);
 
   // Expõe função para SearchLeads adicionar lead externo
   useEffect(()=>{
@@ -8625,8 +8626,9 @@ export default function App() {
   const [pwaInstalled, setPwaInstalled] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
 
-  // Load from Supabase on mount
+  // Load from Supabase when user logs in (tenant_id becomes available)
   useEffect(()=>{
+    if(!user?.tenant_id) return; // aguarda login completo
     const loadFromSB = async () => {
       setSbLoading(true);
       const firstStage = FUNIL_STAGES[0]?.id||"f1";
@@ -8681,7 +8683,7 @@ export default function App() {
       }
     };
     loadFromSB();
-  },[]);
+  },[user?.tenant_id]);
   // Polling: sincroniza módulos do tenant em tempo real (a cada 30s)
   // Garante que mudanças feitas pelo owner no SuperAdmin reflitam sem relogar
   useEffect(()=>{
@@ -8811,7 +8813,8 @@ export default function App() {
   };
   // Adiciona lead direto ao módulo Prospecção (chamado pelo SearchLeads)
   const addToProsp = async (data) => {
-    const tenantId = user?.tenant_id || "072b33d2-46ff-4bf2-839b-ee5d33fe6cb7";
+    const tenantId = user?.tenant_id;
+    if(!tenantId){ notify("❌ Usuário não autenticado","warn"); return; }
     const payload = {
       name: data.name||data.company||"",
       company: data.company||"",
@@ -8839,11 +8842,11 @@ export default function App() {
 
   const updateLead=(lead)=>{
     setLeads(ls=>ls.map(l=>l.id===lead.id?lead:l));
-    sbUpdateLead(lead.id,leadToDb(lead)).catch(()=>{});
+    sbUpdateLead(lead.id,leadToDb(lead),user?.tenant_id).catch(()=>{});
   };
   const deleteLead=(id)=>{
     setLeads(ls=>ls.filter(l=>l.id!==id));
-    sbDeleteLead(id).catch(()=>{});
+    sbDeleteLead(id,user?.tenant_id).catch(()=>{});
     notify("Lead removido","warn");
   };
 
