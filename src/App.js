@@ -109,7 +109,7 @@ const dbToLead = (r) => ({
   origem: r.origem||"",
   score: r.score||0,
   status: r.status||"Novo cliente",
-  funilStage: r.funil_stage||"f1",
+  funilStage: r.funil_stage||(r.module==="receptivo"?"r1":"f1"),
   priority: r.priority||"Média",
   notes: r.notes||"",
   channel: r.channel||r.canal||"Direto",
@@ -4670,7 +4670,9 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
   const [selLead, setSelLead] = useState(null);
   const [meetingModal, setMeetingModal] = useState(null); // {lead, stageId}
   const [meetingForm, setMeetingForm] = useState({ meeting_at_date:"", meeting_at_time:"", responsible:"" });
-  const [expandedCols, setExpandedCols] = useState({});
+  // Colunas começam expandidas por padrão
+  const initRecCols = () => RECEPTIVO_STAGES.reduce((acc,s)=>({...acc,["rec_"+s.id]:true}),{});
+  const [expandedCols, setExpandedCols] = useState(initRecCols);
   const toggleCol = (key) => setExpandedCols(p=>({...p,[key]:!p[key]}));
   const tenantId = currentUser?.tenant_id || null;
 
@@ -6415,7 +6417,9 @@ function Prospeccao({ currentUser, onAddToProsp }) {
   });
   const [meetingModal, setMeetingModal] = useState(null); // {lead, stageId}
   const [meetingForm, setMeetingForm] = useState({ meeting_at_date:"", meeting_at_time:"", responsible:"" });
-  const [expandedCols, setExpandedCols] = useState({});
+  // Colunas começam expandidas por padrão
+  const initProspCols = () => PROSP_STAGES.reduce((acc,s)=>({...acc,["prosp_"+s.id]:true}),{});
+  const [expandedCols, setExpandedCols] = useState(initProspCols);
   const toggleCol = (key) => setExpandedCols(p=>({...p,[key]:!p[key]}));
 
   const tenantId = currentUser?.tenant_id || "072b33d2-46ff-4bf2-839b-ee5d33fe6cb7";
