@@ -15,7 +15,7 @@ let TENANT_CONFIG = {
   logoText:     "P.TM",
   segment:      "",
   city:         "",
-  webhookUrl:   "",
+  webhookUrl:   "",c:\Users\Thiago Silva\Downloads\App.js
   modules:      ["prospeccao"],
 };
 
