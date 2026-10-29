@@ -80,7 +80,7 @@ const sbFetch = async (path, method="GET", body=null, extraHeaders={}) => {
 
 // ── Supabase helpers ──────────────────────────────────────────────────────────
 const sbGetLeads = (tenantId, module=null) => sbFetch("leads?select=*&order=created_at.desc"+(tenantId?"&tenant_id=eq."+tenantId:"")+(module?"&module=eq."+module:""));
-const sbInsertLead = (lead) => sbFetch("leads", "POST", lead);
+const sbInsertLead = (lead) => sbFetch("leads", "POST", lead, {"Prefer":"return=representation"});
 const sbUpdateLead = (id, patch) => sbFetch("leads?id=eq."+id, "PATCH", patch);
 const sbDeleteLead = (id) => sbFetch("leads?id=eq."+id, "DELETE");
 const sbUpsertGoal = (goal) => sbFetch("goals", "POST", goal, {"Prefer":"resolution=merge-duplicates,return=representation"});
@@ -1324,8 +1324,9 @@ function LeadComments({ lead, tenantId, currentUser }) {
   const normalizePhone = (p) => (p||"").replace(/\D/g,"");
   const leadPhone = normalizePhone((lead&&lead.phone)||(lead&&lead.celular)||(lead&&lead.whatsapp)||"");
 
-  // leadId: UUID string = real (do banco); número grande = temporário (Date.now()) → não salvar
-  const leadId = lead && (typeof lead.id === "string" ? lead.id : null);
+  // leadId: qualquer valor truthy = válido (UUID string ou número do banco)
+  // Só descarta se for número >= 1e13 (Date.now() tem 13 dígitos)
+  const leadId = lead && lead.id && (typeof lead.id === "string" || Number(lead.id) < 1e13) ? lead.id : null;
   useEffect(()=>{
     if(!leadId || !tenantId) return;
     loadComments();
@@ -1419,33 +1420,22 @@ function LeadComments({ lead, tenantId, currentUser }) {
       {activeTab==="comentarios"&&(
         <div style={{padding:"14px 20px",display:"flex",flexDirection:"column",gap:12}}>
           {/* Input */}
-          {!leadId&&(
-            <div style={{fontSize:11,color:"#F59E0B",background:"#F59E0B18",border:"1px solid #F59E0B44",borderRadius:8,padding:"8px 12px"}}>
-              ⚠️ Lead ainda não persistido no banco. Feche e reabra o card para comentar.
-            </div>
-          )}
-          {!tenantId&&(
-            <div style={{fontSize:11,color:"#F87171",background:"#F8717118",border:"1px solid #F8717144",borderRadius:8,padding:"8px 12px"}}>
-              ⚠️ Sessão sem tenant_id. Faça login novamente.
-            </div>
-          )}
           <div style={{display:"flex",flexDirection:"column",gap:6}}>
             <textarea
               value={text}
               onChange={e=>setText(e.target.value)}
               onKeyDown={e=>{ if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); saveComment(); }}}
-              placeholder={leadId&&tenantId?"Adicione um comentário... (Ctrl+Enter para salvar)":"Lead ou sessão inválida para comentar"}
+              placeholder="Adicione um comentário... (Ctrl+Enter para salvar)"
               maxLength={1000}
               rows={3}
-              disabled={!leadId||!tenantId}
-              style={{width:"100%",padding:"9px 12px",background:C.bg,border:"1px solid "+((!leadId||!tenantId)?"#F59E0B55":C.border),borderRadius:8,color:C.text,fontFamily:"inherit",fontSize:12,lineHeight:1.5,resize:"vertical",outline:"none",opacity:(!leadId||!tenantId)?0.5:1}}
+              style={{width:"100%",padding:"9px 12px",background:C.bg,border:"1px solid "+C.border,borderRadius:8,color:C.text,fontFamily:"inherit",fontSize:12,lineHeight:1.5,resize:"vertical",outline:"none"}}
             />
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <span style={{fontSize:10,color:C.faint}}>{text.length}/1000</span>
               <button
                 onClick={saveComment}
-                disabled={!text.trim()||saving||!leadId||!tenantId}
-                style={{padding:"6px 14px",background:C.accent,color:"#fff",border:"none",borderRadius:7,fontSize:12,fontWeight:600,cursor:(text.trim()&&!saving&&leadId&&tenantId)?"pointer":"default",opacity:(text.trim()&&!saving&&leadId&&tenantId)?1:0.4,fontFamily:"inherit"}}>
+                disabled={!text.trim()||saving}
+                style={{padding:"6px 14px",background:C.accent,color:"#fff",border:"none",borderRadius:7,fontSize:12,fontWeight:600,cursor:text.trim()&&!saving?"pointer":"default",opacity:text.trim()&&!saving?1:0.4,fontFamily:"inherit"}}>
                 {saving?"⟳ Salvando...":"💬 Salvar"}
               </button>
             </div>
@@ -8809,11 +8799,9 @@ export default function App() {
       setLeads(ls=>[newLead,...ls]);
       notify("✅ "+newLead.name+" adicionado ao "+(isReceptivo?"Receptivo":"CRM e ao Funil"));
     }catch(e){
-      // Fallback to local if Supabase fails
-      const stageId = firstStage?.id||(isReceptivo?"r1":"f1");
-      setLeadStage(lead.id, stageId);
-      setLeads(ls=>[withStage,...ls]);
-      notify("✅ "+lead.name+" adicionado (offline)");
+      console.error("❌ addLead Supabase error:", e, "\nPayload enviado:", leadToDb(withStage));
+      notify("❌ Erro ao salvar: "+(e?.message||String(e)), "warn");
+      alert("Erro ao cadastrar lead no banco:\n"+(e?.message||String(e))+"\n\nVerifique o console para detalhes.");
     }
   };
   // Adiciona lead direto ao módulo Prospecção (chamado pelo SearchLeads)
