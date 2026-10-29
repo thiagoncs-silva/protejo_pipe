@@ -8908,7 +8908,7 @@ export default function App() {
     if(pg==="dashboard") return <Dashboard leads={leads} onSetPage={setPage} onAcionar={(id)=>{setPage("crm");}} currentUser={user} isMaster={isMaster} navPerms={isOwner&&!viewAsTenant?null:(previewNavPerms||tenantNavPerms)} externalLeadStages={appLeadStages}/>;
     if(pg==="profile") return <CompanyProfile profile={profile} tenantId={user?.tenant_id} onSave={p=>{setProfile(p);notify("Perfil salvo!");}} />;
     if(pg==="search") return <SearchLeads onLeadsFound={addLead} onAddToProsp={addToProsp} existingLeads={leads} profile={profile} currentUser={user} ownerWebhook={ownerWebhooks.busca_leads||ownerWebhook}/>;
-    if(pg==="addlead") return <AddLead onLeadsFound={addLead} existingLeads={leads} profile={profile} module="prospeccao"/>;
+    if(pg==="addlead") return <AddLead onLeadsFound={addToProsp} existingLeads={leads} profile={profile} module="prospeccao"/>;
     if(pg==="messages") return <Messages leads={leads} profile={profile}/>;
     if(pg==="whatsapp") return <WhatsappSender leads={leads} profile={profile} webhook={ownerWebhook}/>;
     if(pg==="crm") return <CRM leads={leads} onUpdateLead={updateLead} onDeleteLead={deleteLead}/>;
