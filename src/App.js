@@ -112,7 +112,8 @@ const dbToLead = (r) => ({
   funilStage: r.funil_stage||"f1",
   priority: r.priority||"Média",
   notes: r.notes||"",
-  channel: r.channel||"Direto",
+  channel: r.channel||r.canal||"Direto",
+  canal: r.canal||r.channel||"",   // canal = alias de channel p/ compatibilidade Receptivo
   description: r.description||"",
   business_hours: r.business_hours||"",
   cadence: [],
@@ -146,7 +147,7 @@ const leadToDb = (l) => ({
   funil_stage: l.funilStage||"f1",
   priority: l.priority||"Média",
   notes: l.notes||"",
-  channel: l.channel||"Direto",
+  channel: l.channel||l.canal||"Direto",
   description: l.description||"",
   business_hours: l.business_hours||"",
   tenant_id: l.tenant_id||null,
@@ -1308,7 +1309,208 @@ function StatusDropdown({lead, onUpdate}) {
 }
 
 
-function LeadDetailModal({lead, onClose, onUpdate, onAcionar, onSetPage=()=>{}}) {
+// ─── LeadComments — comentários manuais + conversa IA ────────────────────────
+// Reutilizável em todos os módulos. Recebe lead (com .id, .phone/.celular) e tenantId.
+function LeadComments({ lead, tenantId, currentUser }) {
+  const [activeTab, setActiveTab] = useState("comentarios");
+  const [comments, setComments]   = useState([]);
+  const [iaMessages, setIaMessages] = useState([]);
+  const [loadingC, setLoadingC]   = useState(false);
+  const [loadingIA, setLoadingIA] = useState(false);
+  const [text, setText]           = useState("");
+  const [saving, setSaving]       = useState(false);
+
+  // Normaliza telefone para comparar com contact_id da pending_messages
+  const normalizePhone = (p) => (p||"").replace(/\D/g,"");
+  const leadPhone = normalizePhone((lead&&lead.phone)||(lead&&lead.celular)||(lead&&lead.whatsapp)||"");
+
+  // leadId: UUID string = real (do banco); número grande = temporário (Date.now()) → não salvar
+  const leadId = lead && (typeof lead.id === "string" ? lead.id : null);
+  useEffect(()=>{
+    if(!leadId || !tenantId) return;
+    loadComments();
+    loadIA();
+  },[leadId]);
+
+  const loadComments = async () => {
+    if(!leadId || !tenantId) return;
+    setLoadingC(true);
+    try {
+      const res = await sbFetch("lead_comments?lead_id=eq."+leadId+"&tenant_id=eq."+tenantId+"&order=created_at.desc");
+      setComments(Array.isArray(res)?res:[]);
+    } catch(e){ console.error("lead_comments",e); }
+    finally{ setLoadingC(false); }
+  };
+
+  const loadIA = async () => {
+    if(!leadPhone||!tenantId) return;
+    setLoadingIA(true);
+    try {
+      // Busca por contact_id que contenha o telefone normalizado (formato @c.us ou direto)
+      const phone = leadPhone;
+      const res = await sbFetch("pending_messages?tenant_id=eq."+tenantId+"&contact_id=like.*"+phone+"*&order=created_at.asc&limit=100");
+      setIaMessages(Array.isArray(res)?res:[]);
+    } catch(e){ console.error("pending_messages",e); }
+    finally{ setLoadingIA(false); }
+  };
+
+  const saveComment = async () => {
+    if(!text.trim()||saving) return;
+    if(!leadId){ console.warn("LeadComments: leadId ausente, não é possível salvar"); return; }
+    if(!tenantId){ console.warn("LeadComments: tenantId ausente, não é possível salvar"); return; }
+    setSaving(true);
+    try {
+      const payload = {
+        lead_id:    leadId,
+        tenant_id:  tenantId,
+        text:       text.trim(),
+        user_name:  (currentUser&&(currentUser.full_name||currentUser.name||currentUser.email))||"Usuário",
+        created_at: new Date().toISOString(),
+      };
+      const res = await sbFetch("lead_comments","POST",payload,{"Prefer":"return=representation"});
+      const saved = Array.isArray(res)?res[0]:res;
+      // Mesmo sem retorno do banco adiciona otimisticamente
+      const newComment = saved || { id: Date.now(), ...payload };
+      setComments(c=>[newComment,...c]);
+      setText("");
+    } catch(e){
+      console.error("save comment error",e);
+      alert("Erro ao salvar comentário: "+(e?.message||String(e)));
+    }
+    finally{ setSaving(false); }
+  };
+
+  const fmtTime = (iso) => {
+    if(!iso) return "";
+    const d = new Date(iso);
+    const hoje = new Date();
+    const ontem = new Date(hoje); ontem.setDate(hoje.getDate()-1);
+    const sameDay = (a,b) => a.toDateString()===b.toDateString();
+    const t = d.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
+    if(sameDay(d,hoje)) return "hoje · "+t;
+    if(sameDay(d,ontem)) return "ontem · "+t;
+    return d.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"})+" · "+t;
+  };
+
+  const initials = (name="") => name.split(" ").filter(Boolean).slice(0,2).map(w=>w[0]).join("").toUpperCase()||"?";
+
+  const tabStyle = (active) => ({
+    flex:1, padding:"10px 8px", border:"none", background:"transparent",
+    color: active ? C.accent : C.muted,
+    fontWeight: active ? 700 : 400,
+    fontSize:12, cursor:"pointer",
+    borderBottom: active ? ("2px solid "+C.accent) : "2px solid transparent",
+    transition:"all 0.15s", fontFamily:"inherit",
+  });
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:0}}>
+      {/* Tabs */}
+      <div style={{display:"flex",borderBottom:"1px solid "+C.border,background:C.panel}}>
+        <button style={tabStyle(activeTab==="comentarios")} onClick={()=>setActiveTab("comentarios")}>
+          💬 Comentários {comments.length>0&&<span style={{marginLeft:4,fontSize:10,background:C.accent+"22",color:C.accent,padding:"1px 6px",borderRadius:10,fontWeight:700}}>{comments.length}</span>}
+        </button>
+        <button style={tabStyle(activeTab==="conversa")} onClick={()=>setActiveTab("conversa")}>
+          🤖 Conversa IA {iaMessages.length>0&&<span style={{marginLeft:4,fontSize:10,background:"#8B5CF622",color:"#8B5CF6",padding:"1px 6px",borderRadius:10,fontWeight:700}}>{iaMessages.length}</span>}
+        </button>
+      </div>
+
+      {/* ── ABA COMENTÁRIOS ── */}
+      {activeTab==="comentarios"&&(
+        <div style={{padding:"14px 20px",display:"flex",flexDirection:"column",gap:12}}>
+          {/* Input */}
+          {!leadId&&(
+            <div style={{fontSize:11,color:"#F59E0B",background:"#F59E0B18",border:"1px solid #F59E0B44",borderRadius:8,padding:"8px 12px"}}>
+              ⚠️ Lead ainda não persistido no banco. Feche e reabra o card para comentar.
+            </div>
+          )}
+          {!tenantId&&(
+            <div style={{fontSize:11,color:"#F87171",background:"#F8717118",border:"1px solid #F8717144",borderRadius:8,padding:"8px 12px"}}>
+              ⚠️ Sessão sem tenant_id. Faça login novamente.
+            </div>
+          )}
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            <textarea
+              value={text}
+              onChange={e=>setText(e.target.value)}
+              onKeyDown={e=>{ if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); saveComment(); }}}
+              placeholder={leadId&&tenantId?"Adicione um comentário... (Ctrl+Enter para salvar)":"Lead ou sessão inválida para comentar"}
+              maxLength={1000}
+              rows={3}
+              disabled={!leadId||!tenantId}
+              style={{width:"100%",padding:"9px 12px",background:C.bg,border:"1px solid "+((!leadId||!tenantId)?"#F59E0B55":C.border),borderRadius:8,color:C.text,fontFamily:"inherit",fontSize:12,lineHeight:1.5,resize:"vertical",outline:"none",opacity:(!leadId||!tenantId)?0.5:1}}
+            />
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontSize:10,color:C.faint}}>{text.length}/1000</span>
+              <button
+                onClick={saveComment}
+                disabled={!text.trim()||saving||!leadId||!tenantId}
+                style={{padding:"6px 14px",background:C.accent,color:"#fff",border:"none",borderRadius:7,fontSize:12,fontWeight:600,cursor:(text.trim()&&!saving&&leadId&&tenantId)?"pointer":"default",opacity:(text.trim()&&!saving&&leadId&&tenantId)?1:0.4,fontFamily:"inherit"}}>
+                {saving?"⟳ Salvando...":"💬 Salvar"}
+              </button>
+            </div>
+          </div>
+
+          {/* Lista */}
+          {loadingC
+            ? <div style={{fontSize:12,color:C.muted,textAlign:"center",padding:"12px 0"}}>⟳ Carregando...</div>
+            : comments.length===0
+              ? <div style={{fontSize:12,color:C.faint,textAlign:"center",padding:"16px 0",fontStyle:"italic"}}>Nenhum comentário ainda. Seja o primeiro a registrar algo.</div>
+              : <div style={{display:"flex",flexDirection:"column",gap:10,maxHeight:240,overflowY:"auto"}}>
+                  {comments.map(c=>(
+                    <div key={c.id} style={{display:"flex",gap:10}}>
+                      <div style={{width:28,height:28,borderRadius:"50%",background:C.accent+"25",border:"1px solid "+C.accent+"40",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:C.accent,flexShrink:0}}>
+                        {initials(c.user_name)}
+                      </div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:"flex",alignItems:"baseline",gap:6,marginBottom:3}}>
+                          <span style={{fontSize:12,fontWeight:600,color:C.text}}>{c.user_name||"Usuário"}</span>
+                          <span style={{fontSize:10,color:C.faint}}>{fmtTime(c.created_at)}</span>
+                        </div>
+                        <div style={{fontSize:12,color:C.text,lineHeight:1.55,background:C.bg,border:"1px solid "+C.border,borderRadius:"0 7px 7px 7px",padding:"7px 10px"}}>
+                          {c.text}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+          }
+        </div>
+      )}
+
+      {/* ── ABA CONVERSA IA ── */}
+      {activeTab==="conversa"&&(
+        <div style={{padding:"14px 20px",maxHeight:340,overflowY:"auto",display:"flex",flexDirection:"column",gap:10}}>
+          {loadingIA
+            ? <div style={{fontSize:12,color:C.muted,textAlign:"center",padding:"12px 0"}}>⟳ Carregando...</div>
+            : iaMessages.length===0
+              ? <div style={{fontSize:12,color:C.faint,textAlign:"center",padding:"20px 0",fontStyle:"italic"}}>Nenhuma mensagem encontrada para este contato.</div>
+              : iaMessages.map(m=>{
+                  const isIA = (m.sender||"").toLowerCase()==="ia"||(m.sender||"").toLowerCase()==="sistema"||(m.sender||"").toLowerCase()==="bot";
+                  return (
+                    <div key={m.id} style={{display:"flex",justifyContent:isIA?"flex-end":"flex-start"}}>
+                      <div style={{maxWidth:"78%"}}>
+                        <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,color:isIA?C.accent:C.muted,marginBottom:3,textAlign:isIA?"right":"left"}}>
+                          {isIA?"IA":"Cliente"}
+                        </div>
+                        <div style={{padding:"7px 11px",borderRadius:isIA?"10px 10px 3px 10px":"10px 10px 10px 3px",fontSize:12,lineHeight:1.5,color:C.text,background:isIA?(C.accent+"20"):C.bg,border:"1px solid "+(isIA?(C.accent+"35"):C.border)}}>
+                          {m.message}
+                        </div>
+                        <div style={{fontSize:9,color:C.faint,marginTop:3,textAlign:isIA?"right":"left"}}>
+                          {fmtTime(m.created_at)}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+          }
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LeadDetailModal({lead, onClose, onUpdate, onAcionar, onSetPage=()=>{}, currentUser=null}) {
   const sc = lead.score>=70?"#4ADE80":lead.score>=40?"#FBBF24":"#F87171";
   return (
     <div style={{position:"fixed",inset:0,zIndex:600,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(6,14,28,0.9)",backdropFilter:"blur(6px)"}} onClick={onClose}>
@@ -1453,6 +1655,11 @@ function LeadDetailModal({lead, onClose, onUpdate, onAcionar, onSetPage=()=>{}})
           </div>
         );
       })()}
+
+{/* Comentários + Conversa IA */}
+      <div style={{borderTop:("1px solid "+C.border)}}>
+        <LeadComments lead={lead} tenantId={lead.tenant_id} currentUser={currentUser}/>
+      </div>
 
 {/* Footer */}
       <div style={{padding:"10px 16px",borderTop:("1px solid "+C.border),display:"flex",gap:8,justifyContent:"flex-end"}}>
@@ -1884,7 +2091,7 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
 
   return (
     <div>
-      {detailLead&&<LeadDetailModal lead={detailLead} onClose={()=>setDetailLead(null)} onUpdate={()=>{}} onAcionar={(id)=>{setDetailLead(null);onAcionar(id);}}/>}
+      {detailLead&&<LeadDetailModal lead={detailLead} onClose={()=>setDetailLead(null)} onUpdate={()=>{}} onAcionar={(id)=>{setDetailLead(null);onAcionar(id);}} currentUser={currentUser}/>}
 
       {/* Header */}
       <div style={{marginBottom:16}}>
@@ -2957,7 +3164,7 @@ function CRM({leads,onUpdateLead,onDeleteLead,currentUser=null}) {
   return (
     <div>
       {acionando&&leadAcionando&&<AcionamentoModal lead={leadAcionando} onUpdate={l=>{onUpdateLead(l);}} onClose={()=>setAcionando(null)}/>}
-      {detailId&&leads.find(l=>l.id===detailId)&&<LeadDetailModal lead={leads.find(l=>l.id===detailId)} onClose={()=>setDetailId(null)} onUpdate={onUpdateLead} onAcionar={(id)=>{setDetailId(null);setAcionando(id);}}/>}
+      {detailId&&leads.find(l=>l.id===detailId)&&<LeadDetailModal lead={leads.find(l=>l.id===detailId)} onClose={()=>setDetailId(null)} onUpdate={onUpdateLead} onAcionar={(id)=>{setDetailId(null);setAcionando(id);}} currentUser={currentUser}/>}
       
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
         <div><div style={{fontSize:20,fontWeight:800,color:C.text,marginBottom:2}}>Acompanhamento de Leads</div><div style={{fontSize:12,color:C.muted}}>{leads.length} leads · {filtered.length} exibidos · clique no status para alterar · clique na linha para expandir</div></div>
@@ -4475,6 +4682,7 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
   const [meetingForm, setMeetingForm] = useState({ meeting_at_date:"", meeting_at_time:"", responsible:"" });
   const [expandedCols, setExpandedCols] = useState({});
   const toggleCol = (key) => setExpandedCols(p=>({...p,[key]:!p[key]}));
+  const tenantId = currentUser?.tenant_id || null;
 
   // Filter only receptivo leads
   const recLeads = leads.filter(l=>l.module==="receptivo");
@@ -4519,34 +4727,37 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
 
   const updateStage = (lead, stageId) => {
     const stage = RECEPTIVO_STAGES.find(s=>s.id===stageId);
+    if(!stage) return;
+    const updatedLead = {...lead, funilStage:stageId, status:stage.name};
+    onUpdateLead(updatedLead);
+    // Atualiza o selLead em tempo real para refletir a mudança no modal
+    if(selLead && selLead.id === lead.id) setSelLead(updatedLead);
+    // Para "Agendou reunião" abre modal adicional para data/responsável (opcional)
     if(stageId==="r2c") {
-      // Agendou reunião — abre modal para capturar data e responsável
-      setMeetingModal({lead, stageId});
+      setMeetingModal({lead: updatedLead, stageId});
       setMeetingForm({
         meeting_at_date: "",
         meeting_at_time: "",
         responsible: currentUser?.name||currentUser?.email||"",
       });
-      return;
     }
-    onUpdateLead({...lead, funilStage:stageId, status:stage?.name||lead.status});
   };
 
   const confirmMeeting = () => {
     if(!meetingModal) return;
     const {lead, stageId} = meetingModal;
-    const stage = RECEPTIVO_STAGES.find(s=>s.id===stageId);
     const meeting_at = meetingForm.meeting_at_date
       ? (meetingForm.meeting_at_date+"T"+(meetingForm.meeting_at_time||"08:00")+":00")
       : null;
-    onUpdateLead({
+    // O stage já foi atualizado em updateStage; aqui só salva os campos extras
+    const updatedLead = {
       ...lead,
-      funilStage: stageId,
-      status: stage?.name||lead.status,
       meeting_at,
       responsible: meetingForm.responsible||lead.responsible||"",
-    });
+    };
+    onUpdateLead(updatedLead);
     setMeetingModal(null);
+    if(selLead && selLead.id === lead.id) setSelLead(updatedLead);
   };
 
   // Hours since created
@@ -4831,38 +5042,57 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
 
             {selLead.notes&&<div style={{...card({padding:12}),marginBottom:16,fontSize:12,color:C.dim,fontStyle:"italic"}}>{selLead.notes}</div>}
 
+            {/* Seletor de etapa — dropdown */}
             <div style={{marginBottom:16}}>
-              <div style={lbl}>Mover para etapa</div>
-              <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                {RECEPTIVO_STAGES.map(s=>{
-                  const active = selLead.status===s.name||selLead.funilStage===s.id;
-                  return (
-                    <div key={s.id} onClick={()=>{updateStage(selLead,s.id);setSelLead({...selLead,funilStage:s.id,status:s.name});}}
-                      style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:8,cursor:"pointer",border:"1px solid "+(active?s.color:C.border),background:active?(s.color+"18"):"transparent",transition:"all 0.15s"}}>
-                      <span>{s.icon}</span>
-                      <span style={{fontSize:12,fontWeight:active?700:400,color:active?s.color:C.muted}}>{s.name}</span>
-                      {active&&<span style={{marginLeft:"auto",fontSize:10,color:s.color,fontWeight:700}}>✓ Atual</span>}
-                    </div>
-                  );
-                })}
-              </div>
+              <div style={lbl}>Etapa atual</div>
+              {(()=>{
+                const curStage = RECEPTIVO_STAGES.find(s=>s.id===selLead.funilStage||s.name===selLead.status)||RECEPTIVO_STAGES[0];
+                return (
+                  <select
+                    value={curStage.id}
+                    onChange={e=>updateStage(selLead,e.target.value)}
+                    style={{...inp,fontSize:13,fontWeight:600,color:curStage.color,background:C.sidebar,cursor:"pointer",appearance:"auto"}}>
+                    {RECEPTIVO_STAGES.map(s=>(
+                      <option key={s.id} value={s.id} style={{color:C.text,background:C.sidebar}}>
+                        {s.icon} {s.name}
+                      </option>
+                    ))}
+                  </select>
+                );
+              })()}
             </div>
 
-            {/* Templates de resposta */}
-            <div>
-              <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:10,textTransform:"uppercase",letterSpacing:1}}>Respostas Rápidas</div>
-              {(RECEPTIVO_TEMPLATES[selLead.canal]||RECEPTIVO_TEMPLATES["WhatsApp"]).slice(0,3).map(t=>{
-                const txt = t.text(selLead,{});
-                return (
-                  <div key={t.id} style={{...card({padding:10,marginBottom:8}),borderLeft:"3px solid #25D366"}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                      <span style={{fontSize:11,fontWeight:700,color:C.text}}>{t.label}</span>
-                      <CopyBtn text={txt}/>
-                    </div>
-                    <div style={{fontSize:11,color:C.dim,lineHeight:1.5}}>{txt.substring(0,100)}...</div>
-                  </div>
-                );
-              })}
+            {/* Templates de resposta — colapsável */}
+            {(()=>{
+              const templates = (RECEPTIVO_TEMPLATES[selLead.canal]||RECEPTIVO_TEMPLATES["WhatsApp"]||[]).slice(0,3);
+              if(!templates.length) return null;
+              return (
+                <div style={{marginBottom:16}}>
+                  <button
+                    onClick={()=>setExpandedCols(p=>({...p,_tpl:!p._tpl}))}
+                    style={{display:"flex",alignItems:"center",gap:6,background:"transparent",border:"none",color:C.muted,fontSize:11,fontWeight:700,cursor:"pointer",textTransform:"uppercase",letterSpacing:1,padding:0,marginBottom:expandedCols._tpl?10:0}}>
+                    <span>{expandedCols._tpl?"▾":"▸"}</span> Respostas Rápidas
+                  </button>
+                  {expandedCols._tpl&&templates.map(t=>{
+                    let txt = "";
+                    try { txt = t.text(selLead,{}); } catch(e){ txt = ""; }
+                    return (
+                      <div key={t.id} style={{...card({padding:10,marginBottom:8}),borderLeft:"3px solid #25D366"}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                          <span style={{fontSize:11,fontWeight:700,color:C.text}}>{t.label}</span>
+                          <CopyBtn text={txt}/>
+                        </div>
+                        <div style={{fontSize:11,color:C.dim,lineHeight:1.5}}>{txt.substring(0,100)}{txt.length>100?"...":""}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+            {/* Comentários + Conversa IA */}
+            <div style={{borderTop:"1px solid "+C.border,marginTop:16}}>
+              <LeadComments lead={selLead} tenantId={selLead.tenant_id||tenantId} currentUser={currentUser}/>
             </div>
 
             <div style={{display:"flex",gap:8,marginTop:16}}>
@@ -6464,18 +6694,22 @@ function Prospeccao({ currentUser, onAddToProsp }) {
             </div>
             {sel.notes&&<div style={{...card({padding:10}),fontSize:11,color:C.dim,marginBottom:12}}>{sel.notes}</div>}
             <div style={{marginBottom:14}}>
-              <div style={lbl}>Mover estágio</div>
-              <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                {PROSP_STAGES.map(s=>{
-                  const active=getStageId(sel)===s.id;
-                  return (
-                    <div key={s.id} onClick={()=>{moveStage(sel,s.id);setSel(l=>({...l,status:s.name}));}}
-                      style={{padding:"5px 10px",borderRadius:20,cursor:"pointer",fontSize:10,fontWeight:active?700:400,border:"1px solid "+(active?s.color:C.border),background:active?(s.color+"18"):"transparent",color:active?s.color:C.muted}}>
-                      {s.icon} {s.name}
-                    </div>
-                  );
-                })}
-              </div>
+              <div style={lbl}>Etapa atual</div>
+              {(()=>{
+                const curStage = PROSP_STAGES.find(s=>s.id===getStageId(sel))||PROSP_STAGES[0];
+                return (
+                  <select
+                    value={curStage.id}
+                    onChange={e=>{moveStage(sel,e.target.value);setSel(l=>({...l,status:(PROSP_STAGES.find(s=>s.id===e.target.value)||{}).name||l.status}));}}
+                    style={{...inp,fontSize:13,fontWeight:600,color:curStage.color,background:C.sidebar,cursor:"pointer",appearance:"auto"}}>
+                    {PROSP_STAGES.map(s=>(
+                      <option key={s.id} value={s.id} style={{color:C.text,background:C.sidebar}}>
+                        {s.icon} {s.name}
+                      </option>
+                    ))}
+                  </select>
+                );
+              })()}
             </div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               {sel.phone&&(
@@ -6864,6 +7098,9 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
     data_relacionamento:"", data_agendamento:"", hora_agendamento:"",
   });
   const [lote, setLote] = useState([]);
+  // Modal de agendamento de reunião (igual ao Prospecção/Receptivo)
+  const [meetingModal, setMeetingModal] = useState(null); // {lead}
+  const [meetingForm, setMeetingForm]   = useState({ meeting_at_date:"", meeting_at_time:"", responsible:"" });
 
   const tenantId = currentUser?.tenant_id || "072b33d2-46ff-4bf2-839b-ee5d33fe6cb7";
   const f = (k,v) => setForm(p=>({...p,[k]:v}));
@@ -6878,15 +7115,38 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
         const map = {
           "Enviado":          "Enviado",
           "Em conversa":      "Respondeu",
+          "Respondeu":        "Respondeu",
           "Agendou reunião":  "Agendou reunião",
+          "Proposta":         "Proposta",
+          "Fechado":          "Fechado",
           "Sem resposta":     "Sem resposta",
+          "Erro":             "Erro",
         };
-        return map[s] || s || null; // null permanece null — sem fallback
+        return map[s] || s || "Aguardando";
       };
 
+      // Fonte principal: tabela leads com module=pos_venda (igual à Prospecção)
+      const leadsRows = await sbFetch("leads?select=*&tenant_id=eq."+tenantId+"&module=eq.pos_venda&order=created_at.desc");
+      // Legado: tabela pos_venda (clientes processados pela IA antes da migração)
       const rows = await sbFetch("pos_venda?select=*&tenant_id=eq."+tenantId+"&order=data_cadastro.desc");
       // Agenda: todos os status (pendente, erro, processado)
       const agenda = await sbFetch("pos_venda_agenda?select=*&tenant_id=eq."+tenantId+"&order=data_agendamento.asc");
+
+      // Normaliza lead da tabela leads para o formato interno do PosVenda
+      const normalizaLead = (l) => ({
+        ...l,
+        _source: "leads",
+        nome: l.name||l.nome||"",
+        celular: l.phone||l.celular||"",
+        whatsapp: l.phone||l.celular||"",
+        nome_formatado: (l.name||l.nome||"")
+          ? (l.name||l.nome).split(" ")[0].charAt(0).toUpperCase()+(l.name||l.nome).split(" ")[0].slice(1).toLowerCase()
+          : "",
+        status_envio: normalizaPvStatus(l.status)||"Aguardando",
+        data_cadastro: l.created_at,
+        vendedor: l.responsible||null,
+        data_agendamento: l.meeting_at||null,
+      });
 
       // Mapeamento:
       //   pendente   → "Aguardando"  (ainda não chegou a hora)
@@ -6917,10 +7177,19 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
         .map(normaliza);
       const pvRows = (Array.isArray(rows)?rows:[]).map(r=>({
         ...r,
-        status_envio: normalizaPvStatus(r.status_envio),
+        status_envio: normalizaPvStatus(r.status_envio)||"Aguardando",
+        nome_formatado: r.nome
+          ? r.nome.split(" ")[0].charAt(0).toUpperCase()+r.nome.split(" ")[0].slice(1).toLowerCase()
+          : r.nome,
+        // garante alias de telefone
+        celular: r.celular||r.whatsapp||r.telefone||"",
       }));
-      setClientes([...agendaRows, ...pvRows]);
-      console.log("[PosVenda] agenda filtrada:", agendaRows.length, "pos_venda:", pvRows.length);
+      const leadsNorm = (Array.isArray(leadsRows)?leadsRows:[]).map(normalizaLead);
+      // Deduplicar por telefone entre leads e pvRows (leads têm prioridade)
+      const leadsPhones = new Set(leadsNorm.map(l=>l.celular||"").filter(Boolean));
+      const pvRowsFiltrado = pvRows.filter(r=>!leadsPhones.has(r.celular||""));
+      setClientes([...leadsNorm, ...agendaRows, ...pvRowsFiltrado]);
+      console.log("[PosVenda] leads:", leadsNorm.length, "agenda:", agendaRows.length, "pos_venda legacy:", pvRowsFiltrado.length);
       setLeadStages([]);
       setError("");
     } catch(e) {
@@ -6930,14 +7199,51 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
 
   useEffect(()=>{ loadClientes(); },[]);
 
-  // ── Atualizar status na tabela pos_venda (apenas clientes já processados) ────
-  const updateStatus = async (lead, novoStatus) => {
-    if(lead._source) return; // agenda_pendente e agenda_erro não têm status editável aqui
+  // ── Atualizar status ──────────────────────────────────────────────────────────
+  const updateStatus = async (lead, novoStatus, extraFields={}) => {
+    if(lead._source && lead._source!=="leads") return; // agenda_pendente/erro não editáveis
+    // Se moveu para "Agendou reunião" manualmente → abre modal para capturar data/responsável
+    if(novoStatus==="Agendou reunião" && !extraFields._skipModal){
+      setMeetingModal({lead});
+      setMeetingForm({
+        meeting_at_date: "",
+        meeting_at_time: "",
+        responsible: currentUser?.full_name||currentUser?.name||currentUser?.email||"",
+      });
+      return;
+    }
     try {
-      await sbFetch("pos_venda?id=eq."+lead.id+"&tenant_id=eq."+tenantId, "PATCH", {status_envio: novoStatus});
-      setClientes(cs=>cs.map(c=>c.id===lead.id?{...c,status_envio:novoStatus}:c));
-      if(sel?.id===lead.id) setSel(s=>({...s,status_envio:novoStatus}));
+      if(lead._source==="leads"){
+        // Registro novo — salva na tabela leads (remove campo interno _skipModal)
+        const {_skipModal:_, ...patchFields} = extraFields;
+        const patch = {status: novoStatus, ...patchFields};
+        await sbFetch("leads?id=eq."+lead.id+"&tenant_id=eq."+tenantId, "PATCH", patch);
+        setClientes(cs=>cs.map(c=>c.id===lead.id?{...c,status_envio:novoStatus,...extraFields}:c));
+        if(sel?.id===lead.id) setSel(s=>({...s,status_envio:novoStatus,...extraFields}));
+      } else {
+        // Legado — salva em pos_venda
+        await sbFetch("pos_venda?id=eq."+lead.id+"&tenant_id=eq."+tenantId, "PATCH", {status_envio: novoStatus});
+        setClientes(cs=>cs.map(c=>c.id===lead.id?{...c,status_envio:novoStatus}:c));
+        if(sel?.id===lead.id) setSel(s=>({...s,status_envio:novoStatus}));
+      }
     } catch(e) { setError(e.message); }
+  };
+
+  // ── Confirmar agendamento de reunião (manual) ─────────────────────────────────
+  const confirmMeetingPv = async () => {
+    if(!meetingModal) return;
+    const {lead} = meetingModal;
+    const meeting_at = meetingForm.meeting_at_date
+      ? (meetingForm.meeting_at_date+"T"+(meetingForm.meeting_at_time||"08:00")+":00")
+      : null;
+    // Responsável: preenchido pelo usuário ou cai no usuário logado
+    const responsible = meetingForm.responsible||currentUser?.full_name||currentUser?.name||currentUser?.email||"";
+    await updateStatus(lead, "Agendou reunião", {
+      meeting_at,
+      responsible,
+      _skipModal: true,
+    });
+    setMeetingModal(null);
   };
 
   // ── Retentar processamento de registro com erro na agenda ─────────────────
@@ -6959,51 +7265,80 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
   };
 
   // ── Salvar novo cliente ───────────────────────────────────────────────────────
+  // ── GUARDRAIL: salvar com retry automático (até 3 tentativas) ────────────────
+  const sbFetchRetry = async (path, method, body, attempts=3) => {
+    let lastErr;
+    for(let i=0;i<attempts;i++){
+      try { return await sbFetch(path, method, body); }
+      catch(e){
+        lastErr = e;
+        if(i < attempts-1) await new Promise(r=>setTimeout(r, 800*(i+1)));
+      }
+    }
+    throw lastErr;
+  };
+
   const salvarCliente = async () => {
     const isLote = lote.length > 0;
-    if(!isLote && (!form.nome||!form.telefone)){ setError("Nome e telefone são obrigatórios."); return; }
-    // data/hora obrigatório apenas no cadastro individual (no lote pode ser preenchido depois)
-    if(!isLote && (!form.data_agendamento||!form.hora_agendamento)){ setError("Data e horário do acionamento são obrigatórios."); return; }
+    if(!isLote && (!form.nome||!form.telefone)){ setError("⚠️ Nome e telefone são obrigatórios."); return; }
     setSaving(true); setError("");
+
+    // Helper seguro para montar ISO datetime
+    const toISO = (date, hora) => {
+      if(!date) return null;
+      const isoStr = date+"T"+(hora||"08:00")+":00";
+      const d = new Date(isoStr);
+      return isNaN(d.getTime()) ? null : d.toISOString();
+    };
+
+    const lista = isLote ? lote : [form];
+    const now = new Date().toISOString();
+
+    // ── Salvar na tabela leads (igual à Prospecção) ───────────────────────────
+    const leadsPayload = lista.map(item => ({
+      tenant_id: tenantId,
+      name: item.nome,
+      phone: item.telefone,
+      company: item.company||"",
+      email: item.email||"",
+      channel: "whatsapp",
+      notes: item.notes||"",
+      city: item.city||"",
+      module: "pos_venda",
+      status: "Aguardando",
+      responsible: item.vendedor||null,
+      meeting_at: toISO(item.data_agendamento, item.hora_agendamento)||null,
+      created_at: now,
+    }));
+
+    let salvos = [];
     try {
-      const lista = isLote ? lote : [form];
-      // data/hora padrão do formulário para uso no lote importado
-      const dataDefault = form.data_agendamento && form.hora_agendamento
-        ? new Date(form.data_agendamento+"T"+form.hora_agendamento+":00").toISOString()
-        : null;
-      // Helper seguro para montar ISO datetime — retorna null se data inválida
-      const toISO = (date, hora) => {
-        if(!date) return null;
-        // date já deve estar no formato YYYY-MM-DD após parseDateBR
-        const isoStr = date+"T"+(hora||"08:00")+":00";
-        const d = new Date(isoStr);
-        return isNaN(d.getTime()) ? null : d.toISOString();
-      };
-      const now = new Date().toISOString();
-      const payload = lista.map(item => ({
-        tenant_id: tenantId,
-        nome: item.nome,
-        telefone: item.telefone,
-        cpf_cnpj: item.cpf_cnpj||null,
-        vendedor: item.vendedor||null,
-        data_relacionamento: item.data_relacionamento||null,
-        data_agendamento: toISO(item.data_agendamento, item.hora_agendamento) || dataDefault,
-        status: "pendente",
-        created_at: now,
-      }));
-      // Envia em chunks de 200 para não estourar o limite do Supabase
-      const CHUNK = 200;
-      for(let i=0; i<payload.length; i+=CHUNK){
-        await sbFetch("pos_venda_agenda","POST", payload.slice(i, i+CHUNK));
+      const CHUNK = 50;
+      for(let i=0;i<leadsPayload.length;i+=CHUNK){
+        const res = await sbFetch(
+          "leads",
+          "POST",
+          leadsPayload.slice(i,i+CHUNK),
+          {"Prefer":"return=representation"}
+        );
+        if(Array.isArray(res)) salvos.push(...res);
       }
-      setLote([]);
-      setForm({nome:"",telefone:"",cpf_cnpj:"",vendedor:"",data_relacionamento:"",data_agendamento:"",hora_agendamento:""});
-      setShowForm(false);
-      notify("✅ "+(isLote?lista.length+" clientes importados":"Cliente agendado")+" com sucesso!");
-      loadClientes();
+      if(salvos.length===0 && leadsPayload.length>0){
+        throw new Error("Nenhum registro retornado após insert");
+      }
     } catch(e){
-      setError("Erro ao salvar: "+e.message);
-    } finally { setSaving(false); }
+      setError("❌ Falha ao salvar no banco de dados (leads): "+e.message+". Verifique sua conexão e tente novamente.");
+      setSaving(false);
+      return; // Para aqui — não continua se o save principal falhou
+    }
+
+    // ── Sucesso ────────────────────────────────────────────────────────────────
+    setLote([]);
+    setForm({nome:"",telefone:"",cpf_cnpj:"",vendedor:"",data_relacionamento:"",data_agendamento:"",hora_agendamento:""});
+    setShowForm(false);
+    notify("✅ "+(isLote?lista.length+" clientes salvos":"Cliente salvo")+" com sucesso!");
+    loadClientes();
+    setSaving(false);
   };
 
   const addToLote = () => {
@@ -7198,9 +7533,19 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
                               onMouseEnter={e=>e.currentTarget.style.borderColor=color}
                               onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
                               <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:4}}>{c.nome_formatado||c.nome}</div>
-                              {c.vendedor&&<div style={{fontSize:9,color:C.faint,marginBottom:4}}>👤 {c.vendedor}</div>}
+                              {(c.vendedor||c.responsible)&&<div style={{fontSize:9,color:C.faint,marginBottom:4}}>👤 {c.vendedor||c.responsible}</div>}
                               <div style={{fontSize:10,color:C.muted}}>{c.celular||c.whatsapp||"—"}</div>
-                              {c.data_cadastro&&<div style={{fontSize:10,color:C.faint,marginTop:2}}>📅 {new Date(c.data_cadastro).toLocaleDateString("pt-BR")}</div>}
+                              {c.data_cadastro&&<div style={{fontSize:10,color:C.faint,marginTop:2}}>📋 {new Date(c.data_cadastro).toLocaleDateString("pt-BR")}</div>}
+                              {/* Info da reunião quando status = Agendou reunião */}
+                              {(c.status_envio==="Agendou reunião"||status==="Agendou reunião")&&(c.meeting_at||c.data_agendamento)&&(
+                                <div style={{marginTop:6,padding:"6px 8px",background:"#10B98115",border:"1px solid #10B98133",borderRadius:6}}>
+                                  <div style={{fontSize:9,fontWeight:700,color:"#10B981",marginBottom:2}}>📅 REUNIÃO AGENDADA</div>
+                                  <div style={{fontSize:10,color:"#10B981"}}>
+                                    {new Date(c.meeting_at||c.data_agendamento).toLocaleDateString("pt-BR")} às {new Date(c.meeting_at||c.data_agendamento).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}
+                                  </div>
+                                  {(c.responsible||c.vendedor)&&<div style={{fontSize:9,color:"#10B981",opacity:0.8,marginTop:1}}>👤 {c.responsible||c.vendedor}</div>}
+                                </div>
+                              )}
                               <div style={{marginTop:8}}>
                                 <select value={c.status_envio||""} onClick={e=>e.stopPropagation()}
                                   onChange={e=>updateStatus(c,e.target.value)}
@@ -7348,27 +7693,52 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
                 </div>
               </div>
 
-              {/* Atualizar status */}
-              <div style={{padding:"14px 24px",borderBottom:"1px solid "+C.border}}>
-                <div style={{fontSize:11,color:C.faint,fontWeight:700,marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>Status do acionamento</div>
-                <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                  {(sel._source ? PV_STATUS : PV_STATUS_EDITAVEIS).map(st=>{
-                    const active=selStatus===st;
-                    const stColor2=pvMeta(st).color;
-                    return (
-                      <div key={st} onClick={()=>updateStatus(sel,st)}
-                        style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,cursor:sel._source?"default":"pointer",border:"1px solid "+(active?stColor2:C.border),background:active?(stColor2+"12"):"transparent",transition:"all 0.15s",opacity:sel._source?0.6:1}}>
-                        <div style={{width:8,height:8,borderRadius:"50%",background:active?stColor2:C.border,flexShrink:0}}/>
-                        <span style={{fontSize:12,fontWeight:active?700:400,color:active?stColor2:C.muted}}>{st}</span>
-                        {active&&<span style={{marginLeft:"auto",fontSize:10,color:stColor2,fontWeight:700}}>✓ Atual</span>}
+              {/* Reunião agendada — exibe quando status = Agendou reunião */}
+              {selStatus==="Agendou reunião"&&(
+                <div style={{padding:"14px 24px",borderBottom:"1px solid "+C.border,background:"#10B98108"}}>
+                  <div style={{fontSize:11,color:"#10B981",fontWeight:700,marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>📅 Reunião Agendada</div>
+                  {(sel.meeting_at||sel.data_agendamento)
+                    ? <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                        <div style={{fontSize:13,fontWeight:700,color:"#10B981"}}>
+                          {new Date(sel.meeting_at||sel.data_agendamento).toLocaleDateString("pt-BR",{weekday:"long",day:"2-digit",month:"long"})}
+                        </div>
+                        <div style={{fontSize:12,color:"#10B981",opacity:0.85}}>
+                          🕐 {new Date(sel.meeting_at||sel.data_agendamento).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}
+                        </div>
+                        {(sel.responsible||sel.vendedor)&&(
+                          <div style={{fontSize:12,color:C.muted,marginTop:2}}>
+                            👤 {sel.responsible||sel.vendedor}
+                          </div>
+                        )}
                       </div>
-                    );
-                  })}
+                    : <div style={{fontSize:12,color:C.faint,fontStyle:"italic"}}>Data não informada</div>
+                  }
                 </div>
+              )}
+
+              {/* Atualizar status — dropdown padronizado */}
+              <div style={{padding:"14px 24px",borderBottom:"1px solid "+C.border}}>
+                <div style={lbl}>Etapa atual</div>
+                <select
+                  value={selStatus}
+                  disabled={!!sel._source}
+                  onChange={e=>updateStatus(sel,e.target.value)}
+                  style={{...inp,fontSize:13,fontWeight:600,color:pvMeta(selStatus).color,background:C.sidebar,cursor:sel._source?"default":"pointer",appearance:"auto",opacity:sel._source?0.6:1}}>
+                  {(sel._source ? PV_STATUS : PV_STATUS_EDITAVEIS).map(st=>(
+                    <option key={st} value={st} style={{color:C.text,background:C.sidebar}}>
+                      {pvMeta(st).icon} {st}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Comentários + Conversa IA */}
+              <div style={{borderTop:"1px solid "+C.border}}>
+                <LeadComments lead={sel} tenantId={tenantId} currentUser={currentUser}/>
               </div>
 
               {/* Ações */}
-              <div style={{padding:"14px 24px",display:"flex",gap:8,flexWrap:"wrap"}}>
+              <div style={{padding:"14px 24px",display:"flex",gap:8,flexWrap:"wrap",borderTop:"1px solid "+C.border}}>
                 {(sel.celular||sel.whatsapp)&&(
                   <button onClick={()=>{
                     const raw=((sel.celular||sel.whatsapp)||"").replace(/\D/g,"");
@@ -7619,6 +7989,44 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
                 style={{...btnP,flex:2,padding:"11px",fontSize:13,fontWeight:700,opacity:saving?0.7:1}}>
                 {saving?"⟳ Salvando...":(lote.length>0?"💾 Salvar "+lote.length+" clientes":"💾 Salvar cliente")}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Agendou Reunião (PosVenda) ─────────────────────────────── */}
+      {meetingModal&&(
+        <div style={{position:"fixed",inset:0,zIndex:600,background:"rgba(6,14,28,0.85)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+          onClick={()=>setMeetingModal(null)}>
+          <div style={{background:C.panel,border:"1px solid "+C.border,borderRadius:16,padding:24,width:"100%",maxWidth:380,boxShadow:"0 24px 64px rgba(0,0,0,0.6)"}}
+            onClick={e=>e.stopPropagation()}>
+            <div style={{fontSize:16,fontWeight:700,color:"#10B981",marginBottom:4}}>📅 Agendou Reunião</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:18}}>{meetingModal.lead?.nome||meetingModal.lead?.name||""}</div>
+            <div style={{marginBottom:14}}>
+              <div style={lbl}>Data da reunião</div>
+              <input type="date" value={meetingForm.meeting_at_date}
+                onChange={e=>setMeetingForm(f=>({...f,meeting_at_date:e.target.value}))}
+                style={{...inp,width:"100%"}}/>
+            </div>
+            <div style={{marginBottom:14}}>
+              <div style={lbl}>Horário</div>
+              <input type="time" value={meetingForm.meeting_at_time}
+                onChange={e=>setMeetingForm(f=>({...f,meeting_at_time:e.target.value}))}
+                style={{...inp,width:"100%"}}/>
+            </div>
+            <div style={{marginBottom:20}}>
+              <div style={lbl}>Responsável pelo atendimento</div>
+              <input type="text" placeholder="Nome do vendedor"
+                value={meetingForm.responsible}
+                onChange={e=>setMeetingForm(f=>({...f,responsible:e.target.value}))}
+                style={{...inp,width:"100%"}}/>
+              <div style={{fontSize:10,color:C.faint,marginTop:4}}>
+                Preenchido automaticamente com o usuário logado
+              </div>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>setMeetingModal(null)} style={{...btnG,flex:1}}>Cancelar</button>
+              <button onClick={confirmMeetingPv} style={{...btnP,flex:1,background:"linear-gradient(135deg,#10B981,#059669)"}}>✅ Confirmar</button>
             </div>
           </div>
         </div>
