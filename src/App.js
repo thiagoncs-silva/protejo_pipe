@@ -15,7 +15,7 @@ let TENANT_CONFIG = {
   logoText:     "P.TM",
   segment:      "",
   city:         "",
-  webhookUrl:   "",c:\Users\Thiago Silva\Downloads\App.js
+  webhookUrl:   "",
   modules:      ["prospeccao"],
 };
 
@@ -6430,7 +6430,7 @@ function Prospeccao({ currentUser, onAddToProsp }) {
     setLoading(true);
     try {
       const [rows, stages] = await Promise.all([
-        sbFetch("leads?tenant_id=eq."+tenantId+"&or=(module.eq.prospeccao,module.is.null)&select=*&order=created_at.desc"),
+        sbFetch("leads?tenant_id=eq."+tenantId+"&module=eq.prospeccao&select=*&order=created_at.desc"),
         sbFetch("lead_stages?select=*&tenant_id=eq."+tenantId+"&order=entered_at.desc"),
       ]);
       setLeads(Array.isArray(rows)?rows:[]);
@@ -6452,7 +6452,14 @@ function Prospeccao({ currentUser, onAddToProsp }) {
     return acc;
   },{});
 
-  const getStageId = (l) => latestStageMap[l.id]?.stage_id || PROSP_STAGES[0].id;
+  const getStageId = (l) => {
+    // 1. Usa a entrada mais recente em lead_stages
+    if(latestStageMap[l.id]?.stage_id) return latestStageMap[l.id].stage_id;
+    // 2. Usa funil_stage do banco SE for um ID válido de PROSP_STAGES
+    if(l.funil_stage && PROSP_STAGES.find(s=>s.id===l.funil_stage)) return l.funil_stage;
+    // 3. Fallback: primeira coluna (Novo)
+    return PROSP_STAGES[0].id;
+  };
   const getStage   = (l) => PROSP_STAGES.find(s=>s.id===getStageId(l)) || PROSP_STAGES[0];
 
   const moveStage = async (lead, stageId, extra={}) => {
