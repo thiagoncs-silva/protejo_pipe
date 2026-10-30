@@ -1332,7 +1332,14 @@ function LeadComments({ lead, tenantId, currentUser }) {
 
   // Normaliza telefone para comparar com contact_id da pending_messages
   const normalizePhone = (p) => (p||"").replace(/\D/g,"");
-  const leadPhone = normalizePhone((lead&&lead.phone)||(lead&&lead.celular)||(lead&&lead.whatsapp)||"");
+  // Coleta todos os telefones do lead (campo phone, phones[], celular, whatsapp)
+  const allPhones = [...new Set([
+    normalizePhone(lead&&lead.phone),
+    normalizePhone(lead&&lead.celular),
+    normalizePhone(lead&&lead.whatsapp),
+    ...((lead&&Array.isArray(lead.phones)?lead.phones:[]).map(normalizePhone)),
+  ].filter(p=>p&&p.length>=8))];
+  const leadPhone = allPhones[0]||"";
 
   // leadId: qualquer valor truthy = válido (UUID string ou número do banco)
   // Só descarta se for número >= 1e13 (Date.now() tem 13 dígitos)
@@ -1354,13 +1361,25 @@ function LeadComments({ lead, tenantId, currentUser }) {
   };
 
   const loadIA = async () => {
-    if(!leadPhone||!tenantId) return;
+    if(!allPhones.length||!tenantId) return;
     setLoadingIA(true);
     try {
-      // Busca por contact_id que contenha o telefone normalizado (formato @c.us ou direto)
-      const phone = leadPhone;
-      const res = await sbFetch("pending_messages?tenant_id=eq."+tenantId+"&contact_id=like.*"+phone+"*&order=created_at.asc&limit=100");
-      setIaMessages(Array.isArray(res)?res:[]);
+      // Busca por qualquer telefone do lead no contact_id (formato @c.us ou direto)
+      // Se tiver múltiplos telefones, busca todos com OR via filtro ilike
+      let msgs = [];
+      if(allPhones.length === 1) {
+        const res = await sbFetch("pending_messages?tenant_id=eq."+tenantId+"&contact_id=ilike.*"+allPhones[0]+"*&order=created_at.asc&limit=100");
+        msgs = Array.isArray(res)?res:[];
+      } else {
+        // Busca para cada telefone e mescla sem duplicatas
+        const results = await Promise.all(
+          allPhones.map(ph => sbFetch("pending_messages?tenant_id=eq."+tenantId+"&contact_id=ilike.*"+ph+"*&order=created_at.asc&limit=100").catch(()=>[]))
+        );
+        const seen = new Set();
+        results.flat().forEach(m=>{ if(!seen.has(m.id)){seen.add(m.id);msgs.push(m);} });
+        msgs.sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+      }
+      setIaMessages(msgs);
     } catch(e){ console.error("pending_messages",e); }
     finally{ setLoadingIA(false); }
   };
