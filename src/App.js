@@ -1,4 +1,4 @@
-/* eslint-disable */ 
+/* eslint-disable */
 import React, { useState, useEffect, useRef } from "react";
 
 // ─── SUPABASE CONFIG ──────────────────────────────────────────────────────────
@@ -109,7 +109,17 @@ const dbToLead = (r) => ({
   origem: r.origem||"",
   score: r.score||0,
   status: r.status||"Novo cliente",
-  funilStage: r.funil_stage||(r.module==="receptivo"?"r1":"f1"),
+  funilStage: (()=>{
+    const fs = r.funil_stage;
+    const mod = r.module;
+    // Se tiver funil_stage válido, usa ele
+    if(fs && fs.startsWith("r")) return fs; // stage do receptivo
+    if(fs && fs.startsWith("f")) return fs; // stage do funil/prospeccao
+    if(fs && ["novo","primeiro_contato","em_conversa","agendou_reuniao","proposta","fechado","perdido","erro"].includes(fs)) return fs;
+    // Fallback por módulo
+    if(mod==="receptivo") return "r1";
+    return "f1";
+  })(),
   priority: r.priority||"Média",
   notes: r.notes||"",
   channel: r.channel||r.canal||"Direto",
@@ -119,7 +129,7 @@ const dbToLead = (r) => ({
   cadence: [],
   createdAt: r.created_at,
   // Módulo e pós-venda
-  module: r.module||"prospeccao",
+  module: r.module||(r.funil_stage&&r.funil_stage.startsWith("r")?"receptivo":"prospeccao"),
   pos_venda_id: r.pos_venda_id||null,
   responsible: r.responsible||"",
   meeting_at: r.meeting_at||null,
