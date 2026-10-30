@@ -6434,6 +6434,8 @@ function Prospeccao({ currentUser, onAddToProsp }) {
         sbFetch("lead_stages?select=*&tenant_id=eq."+tenantId+"&order=entered_at.desc"),
       ]);
       console.log("🎯 Prospecção load — leads:", rows?.length, "| tenant:", tenantId);
+      console.log("🎯 lead_stages:", stages?.length, "| sample:", stages?.slice(0,3));
+      console.log("🎯 leads funil_stage values:", rows?.map(r=>({id:r.id,name:r.name,funil_stage:r.funil_stage,module:r.module})));
       setLeads(Array.isArray(rows)?rows:[]);
       setLeadStages(Array.isArray(stages)?stages:[]);
       setError("");
