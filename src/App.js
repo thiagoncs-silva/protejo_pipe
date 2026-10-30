@@ -6459,8 +6459,9 @@ function Prospeccao({ currentUser, onAddToProsp }) {
   },{});
 
   const getStageId = (l) => {
-    // 1. Usa a entrada mais recente em lead_stages
-    if(latestStageMap[l.id]?.stage_id) return latestStageMap[l.id].stage_id;
+    // 1. Usa a entrada mais recente em lead_stages — só se for ID válido de PROSP_STAGES
+    const mappedStage = latestStageMap[l.id]?.stage_id;
+    if(mappedStage && PROSP_STAGES.find(s=>s.id===mappedStage)) return mappedStage;
     // 2. Usa funil_stage do banco SE for um ID válido de PROSP_STAGES
     if(l.funil_stage && PROSP_STAGES.find(s=>s.id===l.funil_stage)) return l.funil_stage;
     // 3. Fallback: primeira coluna (Novo)
@@ -6689,48 +6690,79 @@ function Prospeccao({ currentUser, onAddToProsp }) {
       {sel&&(
         <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(6,14,28,0.85)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
           onClick={()=>setSel(null)}>
-          <div style={{background:C.panel,border:"1px solid "+C.border,borderRadius:16,padding:24,width:"100%",maxWidth:440,boxShadow:"0 24px 64px rgba(0,0,0,0.6)"}}
+          <div style={{background:C.panel,border:"1px solid "+C.border,borderRadius:16,width:"100%",maxWidth:520,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 24px 64px rgba(0,0,0,0.6)"}}
             onClick={e=>e.stopPropagation()}>
-            <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}>
-              <div>
+            {/* Header */}
+            <div style={{padding:"20px 24px 16px",borderBottom:"1px solid "+C.border,display:"flex",alignItems:"flex-start",gap:14}}>
+              <div style={{width:44,height:44,borderRadius:10,background:"linear-gradient(135deg,"+C.accent+","+C.accent2+")",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:18,color:"#fff",flexShrink:0}}>
+                {(sel.name||sel.company||"?")[0].toUpperCase()}
+              </div>
+              <div style={{flex:1}}>
                 <div style={{fontSize:16,fontWeight:800,color:C.text}}>{sel.name||sel.company}</div>
                 {sel.company&&sel.name&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>{sel.company}</div>}
+                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
+                  {sel.city&&<span style={{fontSize:10,color:C.faint,background:C.border,padding:"2px 8px",borderRadius:20}}>📍 {sel.city}</span>}
+                  {sel.channel&&<span style={{fontSize:10,fontWeight:700,color:C.accent,background:C.accent+"14",padding:"2px 8px",borderRadius:20}}>{sel.channel}</span>}
+                  {sel.score>0&&<span style={{fontSize:10,fontWeight:800,color:sel.score>=70?"#4ADE80":sel.score>=40?"#FBBF24":"#F87171",background:(sel.score>=70?"#4ADE80":sel.score>=40?"#FBBF24":"#F87171")+"18",padding:"2px 8px",borderRadius:20}}>Score {sel.score}</span>}
+                </div>
               </div>
-              <button onClick={()=>setSel(null)} style={{background:"transparent",border:"none",color:C.muted,fontSize:20,cursor:"pointer"}}>✕</button>
+              <button onClick={()=>setSel(null)} style={{background:"transparent",border:"none",color:C.muted,fontSize:20,cursor:"pointer",lineHeight:1}}>✕</button>
             </div>
-            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
-              {sel.city&&<span style={{fontSize:10,color:C.faint,background:C.border,padding:"2px 8px",borderRadius:20}}>📍 {sel.city}</span>}
-              {sel.score&&<span style={{fontSize:10,color:"#4ADE80",background:"#4ADE8018",padding:"2px 8px",borderRadius:20,fontWeight:700}}>Score {sel.score}</span>}
-            </div>
-            {sel.notes&&<div style={{...card({padding:10}),fontSize:11,color:C.dim,marginBottom:12}}>{sel.notes}</div>}
-            <div style={{marginBottom:14}}>
-              <div style={lbl}>Etapa atual</div>
+
+            {/* Score bar */}
+            {sel.score>0&&(
+              <div style={{padding:"12px 24px",borderBottom:"1px solid "+C.border}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:11,color:C.muted,fontWeight:600}}>Score de Qualificação</span><span style={{fontSize:12,fontWeight:800,color:sel.score>=70?"#4ADE80":sel.score>=40?"#FBBF24":"#F87171"}}>{sel.score}/100</span></div>
+                <div style={{height:7,background:C.sidebar,borderRadius:4,overflow:"hidden"}}>
+                  <div style={{height:"100%",width:sel.score+"%",background:"linear-gradient(90deg,"+(sel.score>=70?"#4ADE80":sel.score>=40?"#FBBF24":"#F87171")+","+(sel.score>=70?"#22c55e":sel.score>=40?"#f59e0b":"#ef4444")+")",borderRadius:4,transition:"width 0.5s"}}/>
+                </div>
+              </div>
+            )}
+
+            {/* Contatos */}
+            {(sel.email||sel.phone)&&(
+              <div style={{padding:"14px 24px",borderBottom:"1px solid "+C.border,display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                {sel.email&&<div style={{background:C.sidebar,borderRadius:10,padding:"10px 14px"}}>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:"uppercase",marginBottom:3}}>📧 E-mail</div>
+                  <div style={{fontSize:12,color:C.text,fontWeight:600,wordBreak:"break-all"}}>{sel.email}</div>
+                </div>}
+                {sel.phone&&<div style={{background:C.sidebar,borderRadius:10,padding:"10px 14px"}}>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:"uppercase",marginBottom:3}}>📱 WhatsApp</div>
+                  <div style={{fontSize:12,color:C.text,fontWeight:600}}>{sel.phone}</div>
+                </div>}
+              </div>
+            )}
+
+            {/* Etapa + Ações */}
+            <div style={{padding:"14px 24px",borderBottom:"1px solid "+C.border}}>
+              <div style={lbl}>ETAPA ATUAL</div>
               {(()=>{
                 const curStage = PROSP_STAGES.find(s=>s.id===getStageId(sel))||PROSP_STAGES[0];
                 return (
-                  <select
-                    value={curStage.id}
+                  <select value={curStage.id}
                     onChange={e=>{moveStage(sel,e.target.value);setSel(l=>({...l,status:(PROSP_STAGES.find(s=>s.id===e.target.value)||{}).name||l.status}));}}
-                    style={{...inp,fontSize:13,fontWeight:600,color:curStage.color,background:C.sidebar,cursor:"pointer",appearance:"auto"}}>
-                    {PROSP_STAGES.map(s=>(
-                      <option key={s.id} value={s.id} style={{color:C.text,background:C.sidebar}}>
-                        {s.icon} {s.name}
-                      </option>
-                    ))}
+                    style={{...inp,fontSize:13,fontWeight:700,color:curStage.color,background:C.sidebar,cursor:"pointer",appearance:"auto",marginBottom:12}}>
+                    {PROSP_STAGES.map(s=><option key={s.id} value={s.id} style={{color:C.text,background:C.sidebar}}>{s.icon} {s.name}</option>)}
                   </select>
                 );
               })()}
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {sel.phone&&(
+                  <button onClick={()=>{const r=sel.phone.replace(/\D/g,"");const p=r.startsWith("55")?r:"55"+r;window.open("https://api.whatsapp.com/send?phone="+p,"_blank");}}
+                    style={{...btnP,padding:"8px 14px",fontSize:12,background:"linear-gradient(135deg,#25D366,#128C7E)"}}>📱 WhatsApp</button>
+                )}
+                {sel.email&&(
+                  <button onClick={()=>window.open("mailto:"+sel.email,"_blank")}
+                    style={{...btnP,padding:"8px 14px",fontSize:12,background:"linear-gradient(135deg,#3B82F6,#1D4ED8)"}}>✉️ Email</button>
+                )}
+              </div>
             </div>
-            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-              {sel.phone&&(
-                <button onClick={()=>{const r=sel.phone.replace(/\D/g,"");const p=r.startsWith("55")?r:"55"+r;window.open("https://api.whatsapp.com/send?phone="+p,"_blank");}}
-                  style={{...btnP,padding:"9px 14px",fontSize:12,background:"linear-gradient(135deg,#25D366,#128C7E)"}}>📱 WhatsApp</button>
-              )}
-              {sel.email&&(
-                <button onClick={()=>window.open("mailto:"+sel.email,"_blank")}
-                  style={{...btnP,padding:"9px 14px",fontSize:12,background:"linear-gradient(135deg,#3B82F6,#1D4ED8)"}}>✉️ Email</button>
-              )}
-            </div>
+
+            {/* Observações */}
+            {sel.notes&&<div style={{padding:"10px 24px",borderBottom:"1px solid "+C.border,fontSize:11,color:C.dim,fontStyle:"italic"}}>{sel.notes}</div>}
+
+            {/* Comentários + Conversa IA */}
+            <LeadComments lead={sel} tenantId={tenantId} currentUser={currentUser}/>
           </div>
         </div>
       )}
@@ -8798,12 +8830,14 @@ export default function App() {
   const addLead=async(lead)=>{
     if(leads.find(l=>l.name.toLowerCase()===lead.name.toLowerCase()&&l.company?.toLowerCase()===lead.company?.toLowerCase())){notify("Lead já existe no CRM","warn");return;}
     const isReceptivo = lead.module==="receptivo";
-    const firstStage = isReceptivo ? RECEPTIVO_STAGES[0] : FUNIL_STAGES[0];
-    const withStage={...lead,funilStage:firstStage?.id||(isReceptivo?"r1":"f1"),status:firstStage?.name||"Novo contato",tenant_id:user?.tenant_id||null,module:lead.module||"prospeccao"};
+    const isProspeccao = lead.module==="prospeccao";
+    const firstStage = isReceptivo ? RECEPTIVO_STAGES[0] : isProspeccao ? PROSP_STAGES[0] : FUNIL_STAGES[0];
+    const firstStageId = isReceptivo ? "r1" : isProspeccao ? PROSP_STAGES[0].id : "f1";
+    const withStage={...lead,funilStage:firstStage?.id||firstStageId,status:firstStage?.name||"Novo contato",tenant_id:user?.tenant_id||null,module:lead.module||"prospeccao"};
     try{
       const saved=await sbInsertLead(leadToDb(withStage));
       const newLead=saved&&saved[0]?dbToLead(saved[0]):{...withStage,id:Date.now()};
-      const stageId = firstStage?.id||(isReceptivo?"r1":"f1");
+      const stageId = firstStage?.id||firstStageId;
       setLeadStage(newLead.id, stageId);
       // Insere entrada em lead_stages para que o funil do Dashboard contabilize
       const lsEntry = {
