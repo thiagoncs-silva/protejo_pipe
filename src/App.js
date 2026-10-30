@@ -6433,10 +6433,14 @@ function Prospeccao({ currentUser, onAddToProsp }) {
         sbFetch("leads?tenant_id=eq."+tenantId+"&module=eq.prospeccao&select=*&order=created_at.desc"),
         sbFetch("lead_stages?select=*&tenant_id=eq."+tenantId+"&order=entered_at.desc"),
       ]);
+      console.log("🎯 Prospecção load — leads:", rows?.length, "| tenant:", tenantId);
       setLeads(Array.isArray(rows)?rows:[]);
       setLeadStages(Array.isArray(stages)?stages:[]);
       setError("");
-    } catch(e) { setError("Erro ao carregar: "+e.message); }
+    } catch(e) {
+      console.error("❌ Prospecção load error:", e);
+      setError("Erro ao carregar: "+e.message);
+    }
     finally { setLoading(false); }
   };
 
@@ -6567,6 +6571,7 @@ function Prospeccao({ currentUser, onAddToProsp }) {
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
           <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="Buscar..." style={{...inp,width:160,padding:"7px 10px",fontSize:12}}/>
+          <button onClick={load} title="Atualizar leads" style={{...btnG,padding:"9px 12px",fontSize:13}}>🔄</button>
           <button onClick={()=>setShowForm(true)} style={{...btnP,padding:"9px 18px",fontSize:13}}>+ Cadastrar</button>
         </div>
       </div>
