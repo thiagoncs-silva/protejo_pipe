@@ -2468,18 +2468,38 @@ function SearchLeads({onLeadsFound, onAddToProsp=null, existingLeads=[], profile
     try {
       if(mode==="n8n" && webhookUrl) {
         // ── Modo N8N ──────────────────────────────────────────
-        setProg(30); setProgMsg("Buscando no Google Places via N8N...");
-        const res = await fetch(webhookUrl, {
-          method: "POST",
-          headers: {"Content-Type":"application/json"},
-          body: JSON.stringify(payload),
-          mode: "no-cors"
-        });
-        setProg(80); setProgMsg("Aguardando retorno do N8N...");
-        // no-cors: resposta opaca, sucesso presumido
-        setProg(100); setProgMsg("✅ Solicitação enviada ao N8N!");
-        setError("");
-        setTimeout(()=>{setProg(0);setProgMsg("");setLoading(false);},3000);
+        setProg(20); setProgMsg("Conectando ao N8N...");
+        let res;
+        try {
+          res = await fetch(webhookUrl, {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify(payload),
+          });
+        } catch(fetchErr) {
+          // CORS bloqueado — tenta com no-cors como fallback
+          await fetch(webhookUrl, {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify(payload),
+            mode: "no-cors"
+          });
+          setProg(100); setProgMsg("✅ Solicitação enviada! Aguarde o N8N processar.");
+          setError("");
+          setTimeout(()=>{setProg(0);setProgMsg("");setLoading(false);},4000);
+          return;
+        }
+        setProg(50); setProgMsg("Buscando no Google Places via Apify...");
+        if(!res.ok){ setError("Erro N8N: "+res.status+" "+res.statusText); setProg(0); setLoading(false); return; }
+        const data = await res.json();
+        setProg(90); setProgMsg("Processando resultados...");
+        // N8N pode retornar array direto ou {leads:[...]}
+        const arr = Array.isArray(data) ? data : (Array.isArray(data.leads) ? data.leads : []);
+        if(!arr.length){ setError("Nenhum lead encontrado. Tente outro segmento ou cidade."); setProg(0); setLoading(false); return; }
+        setResults(arr.map((l,i)=>({...l, id: Date.now()+i, cadence:[], createdAt: new Date().toISOString().split("T")[0]})));
+        setProg(100); setProgMsg("✅ "+arr.length+" empresa"+(arr.length>1?"s":"")+" encontrada"+(arr.length>1?"s":"")+"!");
+        setTimeout(()=>{setProg(0);setProgMsg("");},2000);
+        setLoading(false);
         return;
       } else {
         // ── Modo IA (fallback) ────────────────────────────────
@@ -6732,21 +6752,10 @@ function Prospeccao({ currentUser, onAddToProsp }) {
                 <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>
                   {sel.city&&<span style={{fontSize:10,color:C.faint,background:C.border,padding:"2px 8px",borderRadius:20}}>📍 {sel.city}</span>}
                   {sel.channel&&<span style={{fontSize:10,fontWeight:700,color:C.accent,background:C.accent+"14",padding:"2px 8px",borderRadius:20}}>{sel.channel}</span>}
-                  {sel.score>0&&<span style={{fontSize:10,fontWeight:800,color:sel.score>=70?"#4ADE80":sel.score>=40?"#FBBF24":"#F87171",background:(sel.score>=70?"#4ADE80":sel.score>=40?"#FBBF24":"#F87171")+"18",padding:"2px 8px",borderRadius:20}}>Score {sel.score}</span>}
                 </div>
               </div>
               <button onClick={()=>setSel(null)} style={{background:"transparent",border:"none",color:C.muted,fontSize:20,cursor:"pointer",lineHeight:1}}>✕</button>
             </div>
-
-            {/* Score bar */}
-            {sel.score>0&&(
-              <div style={{padding:"12px 24px",borderBottom:"1px solid "+C.border}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:11,color:C.muted,fontWeight:600}}>Score de Qualificação</span><span style={{fontSize:12,fontWeight:800,color:sel.score>=70?"#4ADE80":sel.score>=40?"#FBBF24":"#F87171"}}>{sel.score}/100</span></div>
-                <div style={{height:7,background:C.sidebar,borderRadius:4,overflow:"hidden"}}>
-                  <div style={{height:"100%",width:sel.score+"%",background:"linear-gradient(90deg,"+(sel.score>=70?"#4ADE80":sel.score>=40?"#FBBF24":"#F87171")+","+(sel.score>=70?"#22c55e":sel.score>=40?"#f59e0b":"#ef4444")+")",borderRadius:4,transition:"width 0.5s"}}/>
-                </div>
-              </div>
-            )}
 
             {/* Contatos */}
             {(sel.email||sel.phone)&&(
