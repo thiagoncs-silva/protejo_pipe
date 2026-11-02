@@ -2220,29 +2220,53 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
         const days = [];
         // Para períodos longos (>30d) agrupa por semana
         const groupByWeek = chartDays > 30;
+        // Helper: retorna "YYYY-MM-DD" de uma data (ignora hora)
+        const dayKey = (dt) => {
+          const d = new Date(dt);
+          return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+        };
+        // Monta set de chaves dos últimos chartDays dias para lookup O(1)
+        const today = new Date();
+        const todayKey = dayKey(today);
+        // Para modo semana: construir array de dias (dayKey) de cada semana
         if(groupByWeek){
-          // Agrupa em semanas de 7 dias
-          const weeks = Math.ceil(chartDays/7);
-          for(let w=weeks-1;w>=0;w--){
-            const endD = new Date(); endD.setDate(endD.getDate()-w*7);
-            const startD = new Date(endD); startD.setDate(startD.getDate()-6);
+          // Divide os últimos chartDays dias em semanas de 7
+          // Começa do dia mais antigo e vai agrupando de 7 em 7
+          const totalDays = chartDays;
+          const weeks = Math.ceil(totalDays/7);
+          // dias[0] = mais antigo = hoje - (chartDays-1)
+          for(let w=0;w<weeks;w++){
+            // índices de dias nesta semana (0=mais antigo)
+            const wStart = w*7;
+            const wEnd = Math.min(wStart+6, totalDays-1);
+            // daysAgo: wStart → mais antigo desta semana, wEnd → mais recente
+            const startDaysAgo = totalDays-1 - wStart;
+            const endDaysAgo   = totalDays-1 - wEnd;
+            const startD = new Date(today); startD.setDate(today.getDate()-startDaysAgo);
+            const endD   = new Date(today); endD.setDate(today.getDate()-endDaysAgo);
+            // conjunto de keys desta semana
+            const weekKeys = new Set();
+            for(let dd=endDaysAgo;dd<=startDaysAgo;dd++){
+              const x = new Date(today); x.setDate(today.getDate()-dd);
+              weekKeys.add(dayKey(x));
+            }
             const label = startD.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"});
             const fullLabel = startD.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"})+" – "+endD.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"});
             const count = isPosVenda
-              ? srcLeads.filter(l=>{const dt=l.data_envio||l.created_at; if(!dt)return false; const d=new Date(dt); return d>=startD&&d<=endD;}).length
-              : srcLeads.filter(l=>{if(!l.createdAt)return false; const d=new Date(l.createdAt); return d>=startD&&d<=endD;}).length;
+              ? srcLeads.filter(l=>{const dt=l.data_envio||l.created_at; return dt&&weekKeys.has(dayKey(dt));}).length
+              : srcLeads.filter(l=>l.createdAt&&weekKeys.has(dayKey(l.createdAt))).length;
             days.push({label,fullLabel,count});
           }
         } else {
           for(let i=chartDays-1;i>=0;i--){
-            const d = new Date(); d.setDate(d.getDate()-i);
+            const d = new Date(today); d.setDate(today.getDate()-i);
             const showLabel = chartDays<=7 ? true : (i%(chartDays<=14?2:5)===0||i===0);
             const label = showLabel ? d.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}) : "";
             const fullLabel = d.toLocaleDateString("pt-BR",{weekday:"short",day:"2-digit",month:"2-digit",year:"numeric"});
-            const key = d.toDateString();
+            const key = dayKey(d);
             const count = isPosVenda
-              ? srcLeads.filter(l=>{const dt=l.data_envio||l.created_at; return dt&&new Date(dt).toDateString()===key;}).length
-              : srcLeads.filter(l=>l.createdAt&&new Date(l.createdAt).toDateString()===key).length;
+              ? srcLeads.filter(l=>{const dt=l.data_envio||l.created_at; return dt&&dayKey(dt)===key;}).length
+              : srcLeads.filter(l=>l.createdAt&&dayKey(l.createdAt)===key).length;
             days.push({label,fullLabel,count});
           }
         }
@@ -2291,15 +2315,15 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
                   {/* Tooltip */}
                   {hoveredBar===i&&(
                     <div style={{position:"absolute",bottom:"100%",left:"50%",transform:"translateX(-50%)",
-                      background:C.fg,color:C.bg,borderRadius:6,padding:"5px 8px",fontSize:10,
+                      background:"#1a1a2e",color:"#ffffff",borderRadius:6,padding:"5px 8px",fontSize:10,
                       whiteSpace:"nowrap",zIndex:99,pointerEvents:"none",marginBottom:4,
-                      boxShadow:"0 2px 8px rgba(0,0,0,0.25)",lineHeight:1.5}}>
-                      <div style={{fontWeight:700}}>{d.fullLabel}</div>
-                      <div style={{textAlign:"center",opacity:0.85}}>{d.count} lead{d.count!==1?"s":""}</div>
+                      boxShadow:"0 2px 10px rgba(0,0,0,0.45)",lineHeight:1.5}}>
+                      <div style={{fontWeight:700,color:"#ffffff"}}>{d.fullLabel}</div>
+                      <div style={{textAlign:"center",color:"rgba(255,255,255,0.8)"}}>{d.count} lead{d.count!==1?"s":""}</div>
                       {/* seta */}
                       <div style={{position:"absolute",top:"100%",left:"50%",transform:"translateX(-50%)",
                         width:0,height:0,borderLeft:"5px solid transparent",borderRight:"5px solid transparent",
-                        borderTop:`5px solid ${C.fg}`}}/>
+                        borderTop:"5px solid #1a1a2e"}}/>
                     </div>
                   )}
                   {/* rótulo da quantidade — sempre visível quando count>0, tamanho adaptável */}
