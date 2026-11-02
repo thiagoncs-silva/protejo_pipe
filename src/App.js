@@ -2008,11 +2008,9 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
     Promise.all([
       // 1. leads com module=pos_venda (fonte nova, prioritária)
       sbFetch("leads?select=*&tenant_id=eq."+tenantId+"&module=eq.pos_venda&order=created_at.desc").catch(()=>[]),
-      // 2. tabela legada pos_venda
+      // 2. tabela legada pos_venda (deduplicada por telefone contra fonte 1)
       sbFetch("pos_venda?select=*&tenant_id=eq."+tenantId+"&order=data_envio.desc").catch(()=>[]),
-      // 3. agenda (pendente + erro apenas — processado já existe em pos_venda)
-      sbFetch("pos_venda_agenda?select=*&tenant_id=eq."+tenantId+"&order=data_agendamento.asc").catch(()=>[]),
-    ]).then(([leadsRows, pvRows, agendaRows])=>{
+    ]).then(([leadsRows, pvRows])=>{
       // Normaliza leads (tabela leads)
       const leadsNorm = (Array.isArray(leadsRows)?leadsRows:[]).map(r=>({
         ...r,
@@ -2020,25 +2018,22 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
         celular: r.phone||r.celular||"",
         data_envio: r.created_at,
       }));
-      // Normaliza legado pos_venda
+      // Normaliza legado pos_venda — exclui telefones já presentes em leads
       const leadsPhones = new Set(leadsNorm.map(l=>l.celular||"").filter(Boolean));
       const pvNorm = (Array.isArray(pvRows)?pvRows:[])
-        .filter(r=>!leadsPhones.has(r.celular||r.whatsapp||r.telefone||""))
+        .filter(r=>{
+          const tel = (r.celular||r.whatsapp||r.telefone||"").replace(/\D/g,"");
+          return !leadsPhones.has(tel) && !leadsPhones.has(r.celular||r.whatsapp||r.telefone||"");
+        })
         .map(r=>({
           ...r,
           status_envio: normalizePvStatus(r.status_envio),
           celular: r.celular||r.whatsapp||r.telefone||"",
+          data_envio: r.data_envio||r.data_cadastro||r.created_at,
         }));
-      // Normaliza agenda (só pendente e erro)
-      const agendaNorm = (Array.isArray(agendaRows)?agendaRows:[])
-        .filter(a=>a.status!=="processado")
-        .map(a=>({
-          ...a,
-          status_envio: ({pendente:"Aguardando",erro:"Erro"})[a.status]||a.status,
-          celular: a.telefone||"",
-          data_envio: a.data_agendamento,
-        }));
-      setPosVendaData([...leadsNorm, ...pvNorm, ...agendaNorm]);
+      // Agenda NÃO é incluída no Dashboard — é fila de processamento, não clientes reais
+      // Os registros da agenda que viraram clientes já estão em pos_venda (status processado)
+      setPosVendaData([...leadsNorm, ...pvNorm]);
     }).catch(()=>{});
   },[tenantId]);
 
