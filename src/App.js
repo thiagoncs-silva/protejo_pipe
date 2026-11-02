@@ -1966,6 +1966,7 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
   const [leadStages, setLeadStages] = useState([]); // dados reais de lead_stages
   const [tenantUsers, setTenantUsers] = useState([]); // usuários reais do tenant
   const [chartDays, setChartDays] = useState(60); // período do gráfico Leads por Dia
+  const [hoveredBar, setHoveredBar] = useState(null); // índice da barra com hover no gráfico
 
   const tenantId = currentUser?.tenant_id;
 
@@ -2226,21 +2227,23 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
             const endD = new Date(); endD.setDate(endD.getDate()-w*7);
             const startD = new Date(endD); startD.setDate(startD.getDate()-6);
             const label = startD.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"});
+            const fullLabel = startD.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"})+" – "+endD.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"});
             const count = isPosVenda
               ? srcLeads.filter(l=>{const dt=l.data_envio||l.created_at; if(!dt)return false; const d=new Date(dt); return d>=startD&&d<=endD;}).length
               : srcLeads.filter(l=>{if(!l.createdAt)return false; const d=new Date(l.createdAt); return d>=startD&&d<=endD;}).length;
-            days.push({label,count});
+            days.push({label,fullLabel,count});
           }
         } else {
           for(let i=chartDays-1;i>=0;i--){
             const d = new Date(); d.setDate(d.getDate()-i);
             const showLabel = chartDays<=7 ? true : (i%(chartDays<=14?2:5)===0||i===0);
             const label = showLabel ? d.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}) : "";
+            const fullLabel = d.toLocaleDateString("pt-BR",{weekday:"short",day:"2-digit",month:"2-digit",year:"numeric"});
             const key = d.toDateString();
             const count = isPosVenda
               ? srcLeads.filter(l=>{const dt=l.data_envio||l.created_at; return dt&&new Date(dt).toDateString()===key;}).length
               : srcLeads.filter(l=>l.createdAt&&new Date(l.createdAt).toDateString()===key).length;
-            days.push({label,count});
+            days.push({label,fullLabel,count});
           }
         }
         const maxD = Math.max(...days.map(d=>d.count),1);
@@ -2280,16 +2283,32 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
                 </div>
               </div>
             </div>
-            <div style={{display:"flex",alignItems:"flex-end",gap:4,height:130,marginBottom:6,overflowX:"hidden"}}>
+            <div style={{display:"flex",alignItems:"flex-end",gap:4,height:150,marginBottom:6,overflowX:"hidden"}}>
               {days.map((d,i)=>(
-                <div key={i} style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                <div key={i} style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",alignItems:"center",gap:2,position:"relative",cursor:"pointer"}}
+                  onMouseEnter={()=>setHoveredBar(i)}
+                  onMouseLeave={()=>setHoveredBar(null)}>
+                  {/* Tooltip */}
+                  {hoveredBar===i&&(
+                    <div style={{position:"absolute",bottom:"100%",left:"50%",transform:"translateX(-50%)",
+                      background:C.fg,color:C.bg,borderRadius:6,padding:"5px 8px",fontSize:10,
+                      whiteSpace:"nowrap",zIndex:99,pointerEvents:"none",marginBottom:4,
+                      boxShadow:"0 2px 8px rgba(0,0,0,0.25)",lineHeight:1.5}}>
+                      <div style={{fontWeight:700}}>{d.fullLabel}</div>
+                      <div style={{textAlign:"center",opacity:0.85}}>{d.count} lead{d.count!==1?"s":""}</div>
+                      {/* seta */}
+                      <div style={{position:"absolute",top:"100%",left:"50%",transform:"translateX(-50%)",
+                        width:0,height:0,borderLeft:"5px solid transparent",borderRight:"5px solid transparent",
+                        borderTop:`5px solid ${C.fg}`}}/>
+                    </div>
+                  )}
                   {/* rótulo da quantidade — sempre visível quando count>0, tamanho adaptável */}
-                  <div style={{fontSize:chartDays<=14?11:chartDays<=30?10:9,color:C.accent,fontWeight:700,minHeight:14,lineHeight:1,whiteSpace:"nowrap"}}>
+                  <div style={{fontSize:chartDays<=14?11:chartDays<=30?10:9,color:hoveredBar===i?C.accent:C.accent,fontWeight:700,minHeight:14,lineHeight:1,whiteSpace:"nowrap"}}>
                     {d.count>0?d.count:""}
                   </div>
-                  <div style={{width:"100%",background:d.count>0?C.accent:C.border,borderRadius:"3px 3px 0 0",
+                  <div style={{width:"100%",background:d.count>0?(hoveredBar===i?C.fg:C.accent):C.border,borderRadius:"3px 3px 0 0",
                     height:maxD>0?Math.max(2,(d.count/maxD)*90)+"px":"2px",
-                    opacity:d.count>0?1:0.2,transition:"height 0.3s ease",position:"relative"}}>
+                    opacity:d.count>0?1:0.2,transition:"height 0.3s ease,background 0.15s ease",position:"relative"}}>
                   </div>
                 </div>
               ))}
