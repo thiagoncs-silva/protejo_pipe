@@ -2468,7 +2468,7 @@ function SearchLeads({onLeadsFound, onAddToProsp=null, existingLeads=[], profile
     try {
       if(mode==="n8n" && webhookUrl) {
         // ── Modo N8N ──────────────────────────────────────────
-        setProg(20); setProgMsg("Conectando ao N8N...");
+        setProg(20); setProgMsg("Conectando...");
         let res;
         try {
           res = await fetch(webhookUrl, {
@@ -2491,7 +2491,11 @@ function SearchLeads({onLeadsFound, onAddToProsp=null, existingLeads=[], profile
         }
         setProg(50); setProgMsg("Buscando no Google Places via Apify...");
         if(!res.ok){ setError("Erro N8N: "+res.status+" "+res.statusText); setProg(0); setLoading(false); return; }
-        const data = await res.json();
+        let rawText = await res.text();
+        // N8N às vezes retorna com "=" no início quando usa Expression mode
+        if(rawText.startsWith("=")) rawText = rawText.slice(1);
+        let data;
+        try { data = JSON.parse(rawText); } catch(e) { setError("Resposta inválida do N8N."); setProg(0); setLoading(false); return; }
         setProg(90); setProgMsg("Processando resultados...");
         // N8N pode retornar array direto ou {leads:[...]}
         const arr = Array.isArray(data) ? data : (Array.isArray(data.leads) ? data.leads : []);
@@ -2532,17 +2536,12 @@ function SearchLeads({onLeadsFound, onAddToProsp=null, existingLeads=[], profile
   return (
     <div>
       <div style={{fontSize:18,fontWeight:800,color:C.text,marginBottom:4}}>🔍 Gerar Leads</div>
-      <div style={{fontSize:12,color:C.muted,marginBottom:20}}>Preencha o segmento e a cidade — o N8N busca no Google Places.</div>
-
-      {/* Modo selector */}
+      {/* Modo selector — apenas N8N visível */}
       {webhookUrl&&(
         <div style={{display:"flex",gap:0,marginBottom:16,border:"1px solid "+C.border,borderRadius:8,overflow:"hidden",width:"fit-content"}}>
-          {[["n8n","🔗 N8N (Google Places)"],["ia","🤖 IA (simulado)"]].map(([v,l])=>(
-            <button key={v} onClick={()=>setMode(v)}
-              style={{padding:"7px 16px",border:"none",background:mode===v?C.accent:"transparent",color:mode===v?"#fff":C.muted,fontSize:11,fontWeight:mode===v?700:400,cursor:"pointer"}}>
-              {l}
-            </button>
-          ))}
+          <button style={{padding:"7px 16px",border:"none",background:C.accent,color:"#fff",fontSize:11,fontWeight:700,cursor:"default"}}>
+            🔗 N8N (Google Places)
+          </button>
         </div>
       )}
 
