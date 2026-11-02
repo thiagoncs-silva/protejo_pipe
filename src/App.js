@@ -1,4 +1,4 @@
-/* eslint-disable*/
+/* eslint-disable */
 import React, { useState, useEffect, useRef } from "react";
 
 // ─── SUPABASE CONFIG ──────────────────────────────────────────────────────────
@@ -2280,23 +2280,27 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
                 </div>
               </div>
             </div>
-            <div style={{display:"flex",alignItems:"flex-end",gap:chartDays>30?6:8,height:110,marginBottom:10,overflowX:"auto"}}>
+            <div style={{display:"flex",alignItems:"flex-end",gap:4,height:130,marginBottom:6,overflowX:"hidden"}}>
               {days.map((d,i)=>(
-                <div key={i} style={{flex:1,minWidth:chartDays>30?0:8,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-                  {chartDays<=14&&<div style={{fontSize:11,color:C.accent,fontWeight:700,minHeight:16}}>{d.count>0?d.count:""}</div>}
-                  <div style={{width:"100%",background:d.count>0?C.accent:C.border,borderRadius:"4px 4px 0 0",
-                    height:maxD>0?Math.max(2,(d.count/maxD)*80)+"px":"2px",
-                    opacity:d.count>0?1:0.25,transition:"height 0.3s ease",position:"relative"}}>
-                    {d.count===maxD&&d.count>0&&(
-                      <div style={{position:"absolute",top:-14,left:"50%",transform:"translateX(-50%)",fontSize:8,color:"#F59E0B",fontWeight:900}}>★</div>
-                    )}
+                <div key={i} style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                  {/* rótulo da quantidade — sempre visível quando count>0, tamanho adaptável */}
+                  <div style={{fontSize:chartDays<=14?11:chartDays<=30?10:9,color:C.accent,fontWeight:700,minHeight:14,lineHeight:1,whiteSpace:"nowrap"}}>
+                    {d.count>0?d.count:""}
+                  </div>
+                  <div style={{width:"100%",background:d.count>0?C.accent:C.border,borderRadius:"3px 3px 0 0",
+                    height:maxD>0?Math.max(2,(d.count/maxD)*90)+"px":"2px",
+                    opacity:d.count>0?1:0.2,transition:"height 0.3s ease",position:"relative"}}>
                   </div>
                 </div>
               ))}
             </div>
-            <div style={{display:"flex",gap:chartDays>30?6:8}}>
+            {/* labels do eixo X — só mostra os que têm label definido para não quebrar */}
+            <div style={{display:"flex",gap:4}}>
               {days.map((d,i)=>(
-                <div key={i} style={{flex:1,minWidth:chartDays>30?0:8,textAlign:"center",fontSize:9,color:C.faint,lineHeight:1.3,overflow:"hidden"}}>{d.label}</div>
+                <div key={i} style={{flex:1,minWidth:0,textAlign:"center",fontSize:9,color:C.faint,lineHeight:1.2,
+                  overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
+                  {d.label||""}
+                </div>
               ))}
             </div>
           </div>
@@ -7164,6 +7168,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
         status_envio: normalizaPvStatus(l.status)||"Aguardando",
         data_cadastro: l.created_at,
         vendedor: l.responsible||null,
+        responsible_id: l.responsible_id||null,
         data_agendamento: l.meeting_at||null,
       });
 
