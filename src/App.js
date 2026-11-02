@@ -1,4 +1,4 @@
-/* eslint-disable*/
+/* eslint-disable */
 import React, { useState, useEffect, useRef } from "react";
 
 // ─── SUPABASE CONFIG ──────────────────────────────────────────────────────────
@@ -2637,10 +2637,6 @@ function SearchLeads({onLeadsFound, onAddToProsp=null, existingLeads=[], profile
                       🎯 Add Prospecção
                     </button>
                   )}
-                  <button onClick={()=>onLeadsFound([l])}
-                    style={{...btnG,padding:"6px 12px",fontSize:11}}>
-                    + CRM geral
-                  </button>
                 </div>
               </div>
             </div>
@@ -2652,10 +2648,6 @@ function SearchLeads({onLeadsFound, onAddToProsp=null, existingLeads=[], profile
                 🎯 Todos à Prospecção ({results.length})
               </button>
             )}
-            <button onClick={()=>results.forEach(l=>onLeadsFound([l]))}
-              style={{...btnG,flex:1,padding:"10px",fontSize:12}}>
-              ✅ Todos ao CRM ({results.length})
-            </button>
           </div>
         </div>
       )}
