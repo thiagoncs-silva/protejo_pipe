@@ -1991,29 +1991,55 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
       .catch(()=>{});
   },[tenantId, externalLeadStages]);
 
-  // Carrega dados de pós-venda diretamente da tabela pos_venda (fonte correta)
-  // Normaliza status_envio: valores do banco → padrão do app
+  // Carrega dados de pós-venda usando as MESMAS três fontes do módulo Pós-venda
   const normalizePvStatus = (s) => ({
     "Enviado":         "Enviado",
     "Em conversa":     "Respondeu",
+    "Respondeu":       "Respondeu",
     "Agendou reunião": "Agendou reunião",
     "Proposta":        "Proposta",
     "Fechado":         "Fechado",
     "Sem resposta":    "Sem resposta",
     "Erro":            "Erro",
-  }[s] || (s ? s : "Enviado"));
+  }[s] || (s ? s : "Aguardando"));
 
   useEffect(()=>{
     if(!tenantId) return;
-    sbFetch("pos_venda?select=*&tenant_id=eq."+tenantId+"&order=data_envio.desc")
-      .then(rows=>{
-        const normalized = (Array.isArray(rows)?rows:[]).map(r=>({
+    Promise.all([
+      // 1. leads com module=pos_venda (fonte nova, prioritária)
+      sbFetch("leads?select=*&tenant_id=eq."+tenantId+"&module=eq.pos_venda&order=created_at.desc").catch(()=>[]),
+      // 2. tabela legada pos_venda
+      sbFetch("pos_venda?select=*&tenant_id=eq."+tenantId+"&order=data_envio.desc").catch(()=>[]),
+      // 3. agenda (pendente + erro apenas — processado já existe em pos_venda)
+      sbFetch("pos_venda_agenda?select=*&tenant_id=eq."+tenantId+"&order=data_agendamento.asc").catch(()=>[]),
+    ]).then(([leadsRows, pvRows, agendaRows])=>{
+      // Normaliza leads (tabela leads)
+      const leadsNorm = (Array.isArray(leadsRows)?leadsRows:[]).map(r=>({
+        ...r,
+        status_envio: normalizePvStatus(r.status||r.status_envio),
+        celular: r.phone||r.celular||"",
+        data_envio: r.created_at,
+      }));
+      // Normaliza legado pos_venda
+      const leadsPhones = new Set(leadsNorm.map(l=>l.celular||"").filter(Boolean));
+      const pvNorm = (Array.isArray(pvRows)?pvRows:[])
+        .filter(r=>!leadsPhones.has(r.celular||r.whatsapp||r.telefone||""))
+        .map(r=>({
           ...r,
           status_envio: normalizePvStatus(r.status_envio),
+          celular: r.celular||r.whatsapp||r.telefone||"",
         }));
-        setPosVendaData(normalized);
-      })
-      .catch(()=>{});
+      // Normaliza agenda (só pendente e erro)
+      const agendaNorm = (Array.isArray(agendaRows)?agendaRows:[])
+        .filter(a=>a.status!=="processado")
+        .map(a=>({
+          ...a,
+          status_envio: ({pendente:"Aguardando",erro:"Erro"})[a.status]||a.status,
+          celular: a.telefone||"",
+          data_envio: a.data_agendamento,
+        }));
+      setPosVendaData([...leadsNorm, ...pvNorm, ...agendaNorm]);
+    }).catch(()=>{});
   },[tenantId]);
 
   // Filtros por módulo — pos_venda agora usa leads com module=pos_venda
