@@ -132,6 +132,7 @@ const dbToLead = (r) => ({
   module: r.module||(r.funil_stage&&r.funil_stage.startsWith("r")?"receptivo":"prospeccao"),
   pos_venda_id: r.pos_venda_id||null,
   responsible: r.responsible||"",
+  responsible_id: r.responsible_id||null,
   meeting_at: r.meeting_at||null,
   next_contact: r.next_contact||"",
   last_contact_at: r.last_contact_at||"",
@@ -163,6 +164,7 @@ const leadToDb = (l) => ({
   tenant_id: l.tenant_id||null,
   module: l.module||"prospeccao",
   responsible: l.responsible||null,
+  responsible_id: l.responsible_id||null,
   meeting_at: l.meeting_at||null,
 });
 
@@ -687,7 +689,7 @@ const sbAuth = {
 
   // Lista usuários de um tenant
   getTenantUsers: async (tenantId) => {
-    return await sbFetch(`users?tenant_id=eq.${tenantId}&select=id,name,email,role,status,created_at&order=created_at.asc`);
+    return await sbFetch(`users?tenant_id=eq.${tenantId}&select=id,name,full_name,email,role,status,created_at&order=created_at.asc`);
   },
 
   // Atualiza usuário
@@ -1864,10 +1866,12 @@ function DrillUsuarios({ srcLeads=[], users=[], isPosVenda=false, modTab="todos"
   });
   const resolveDisplayName = (key) => userNameMap[key?.toLowerCase?.()] || userNameMap[String(key)] || key || "Sem responsável";
 
-  // Agrupa leads por responsável
+  // Agrupa leads por responsável (prioriza responsible_id → nome canônico do usuário cadastrado)
   const byUser = {};
   srcLeads.forEach(l => {
-    const rawKey = l.responsible || (isPosVenda ? (l.vendedor || "Sem responsável") : "Sem responsável");
+    const rawKey = l.responsible_id
+      ? (userNameMap[String(l.responsible_id)] || l.responsible || "Sem responsável")
+      : (l.responsible || (isPosVenda ? (l.vendedor || "Sem responsável") : "Sem responsável"));
     const displayKey = resolveDisplayName(rawKey);
     if(!byUser[displayKey]) byUser[displayKey] = { name:displayKey, total:0, statusMap:{} };
     byUser[displayKey].total++;
@@ -1957,10 +1961,11 @@ function DrillUsuarios({ srcLeads=[], users=[], isPosVenda=false, modTab="todos"
 }
 
 function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=false, navPerms=null, externalLeadStages=null, onLeadStagesLoaded=null}) {
-  const [modTab, setModTab] = useState("todos"); // todos | prospeccao | receptivo | pos_venda | reativacao | ativo
+  const [modTab, setModTab] = useState("prospeccao"); // prospeccao | receptivo | pos_venda | reativacao | ativo
   const [posVendaData, setPosVendaData] = useState([]);
   const [leadStages, setLeadStages] = useState([]); // dados reais de lead_stages
   const [tenantUsers, setTenantUsers] = useState([]); // usuários reais do tenant
+  const [chartDays, setChartDays] = useState(60); // período do gráfico Leads por Dia
 
   const tenantId = currentUser?.tenant_id;
 
@@ -2100,7 +2105,6 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
 
   // Module tabs config — só exibe módulos habilitados pelo owner
   const allModTabs = [
-    {id:"todos",      label:"🔢 Todos",        count:leads.length,      color:C.accent,    always:true},
     {id:"prospeccao", label:"🎯 Prospecção",   count:proLeads.length,   color:"#3B82F6"},
     {id:"receptivo",  label:"📥 Receptivo",    count:recLeads.length,   color:"#8B5CF6"},
     {id:"pos_venda",  label:"🤝 Pós-venda",    count:posLeads.length,   color:"#4ADE80"},
@@ -2211,148 +2215,94 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
       {/* ── Leads por Dia — linha própria ───────────────────────────────── */}
       {(()=>{
         const srcLeads = isPosVenda ? posLeads : fl;
+        const PERIODS = [{v:7,l:"7 dias"},{v:14,l:"14 dias"},{v:30,l:"30 dias"},{v:60,l:"60 dias"},{v:90,l:"90 dias"},{v:180,l:"6 meses"}];
         const days = [];
-        for(let i=6;i>=0;i--){
-          const d = new Date(); d.setDate(d.getDate()-i);
-          const label = d.toLocaleDateString("pt-BR",{weekday:"short",day:"2-digit"});
-          const key = d.toDateString();
-          const count = isPosVenda
-            ? srcLeads.filter(l=>{const dt=l.data_envio||l.created_at; return dt&&new Date(dt).toDateString()===key;}).length
-            : srcLeads.filter(l=>l.createdAt&&new Date(l.createdAt).toDateString()===key).length;
-          days.push({label,count});
+        // Para períodos longos (>30d) agrupa por semana
+        const groupByWeek = chartDays > 30;
+        if(groupByWeek){
+          // Agrupa em semanas de 7 dias
+          const weeks = Math.ceil(chartDays/7);
+          for(let w=weeks-1;w>=0;w--){
+            const endD = new Date(); endD.setDate(endD.getDate()-w*7);
+            const startD = new Date(endD); startD.setDate(startD.getDate()-6);
+            const label = startD.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"});
+            const count = isPosVenda
+              ? srcLeads.filter(l=>{const dt=l.data_envio||l.created_at; if(!dt)return false; const d=new Date(dt); return d>=startD&&d<=endD;}).length
+              : srcLeads.filter(l=>{if(!l.createdAt)return false; const d=new Date(l.createdAt); return d>=startD&&d<=endD;}).length;
+            days.push({label,count});
+          }
+        } else {
+          for(let i=chartDays-1;i>=0;i--){
+            const d = new Date(); d.setDate(d.getDate()-i);
+            const showLabel = chartDays<=7 ? true : (i%(chartDays<=14?2:5)===0||i===0);
+            const label = showLabel ? d.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}) : "";
+            const key = d.toDateString();
+            const count = isPosVenda
+              ? srcLeads.filter(l=>{const dt=l.data_envio||l.created_at; return dt&&new Date(dt).toDateString()===key;}).length
+              : srcLeads.filter(l=>l.createdAt&&new Date(l.createdAt).toDateString()===key).length;
+            days.push({label,count});
+          }
         }
         const maxD = Math.max(...days.map(d=>d.count),1);
-        const total7 = days.reduce((s,d)=>s+d.count,0);
-        const media = Math.round(total7/7*10)/10;
+        const totalP = days.reduce((s,d)=>s+d.count,0);
+        const media = Math.round(totalP/days.length*10)/10;
+        const modLabel = modTab==="prospeccao"?"Prospecção":modTab==="receptivo"?"Receptivo":modTab==="pos_venda"?"Pós-venda":"Reativação";
         return (
           <div style={{...card({marginTop:4,marginBottom:16})}}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18}}>
+            <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:18,flexWrap:"wrap",gap:12}}>
               <div>
                 <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase"}}>
-                  📈 Leads por Dia — {modTab==="todos"?"Geral":modTab==="prospeccao"?"Prospecção":modTab==="receptivo"?"Receptivo":modTab==="pos_venda"?"Pós-venda":"Reativação"}
+                  📈 Leads por {groupByWeek?"Semana":"Dia"} — {modLabel}
                 </div>
-                <div style={{fontSize:10,color:C.faint,marginTop:2}}>Últimos 7 dias</div>
+                <div style={{fontSize:10,color:C.faint,marginTop:2}}>Últimos {chartDays} dias {groupByWeek?"(agrupado por semana)":""}</div>
               </div>
-              <div style={{display:"flex",gap:20}}>
-                <div style={{textAlign:"right"}}>
-                  <div style={{fontSize:22,fontWeight:900,color:C.accent,lineHeight:1}}>{total7}</div>
-                  <div style={{fontSize:9,color:C.faint}}>total</div>
+              <div style={{display:"flex",alignItems:"center",gap:16}}>
+                {/* Filtro de período */}
+                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                  {PERIODS.map(p=>(
+                    <button key={p.v} onClick={()=>setChartDays(p.v)}
+                      style={{padding:"3px 10px",borderRadius:6,border:"1px solid "+(chartDays===p.v?C.accent:C.border),
+                        background:chartDays===p.v?(C.accent+"22"):"transparent",
+                        color:chartDays===p.v?C.accent:C.dim,fontSize:11,fontWeight:chartDays===p.v?700:400,cursor:"pointer"}}>
+                      {p.l}
+                    </button>
+                  ))}
                 </div>
-                <div style={{textAlign:"right"}}>
-                  <div style={{fontSize:22,fontWeight:900,color:C.muted,lineHeight:1}}>{media}</div>
-                  <div style={{fontSize:9,color:C.faint}}>média/dia</div>
+                <div style={{display:"flex",gap:16}}>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:22,fontWeight:900,color:C.accent,lineHeight:1}}>{totalP}</div>
+                    <div style={{fontSize:9,color:C.faint}}>total</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:22,fontWeight:900,color:C.muted,lineHeight:1}}>{media}</div>
+                    <div style={{fontSize:9,color:C.faint}}>média/{groupByWeek?"sem":"dia"}</div>
+                  </div>
                 </div>
               </div>
             </div>
-            <div style={{display:"flex",alignItems:"flex-end",gap:8,height:110,marginBottom:10}}>
+            <div style={{display:"flex",alignItems:"flex-end",gap:chartDays>30?6:8,height:110,marginBottom:10,overflowX:"auto"}}>
               {days.map((d,i)=>(
-                <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-                  <div style={{fontSize:11,color:C.accent,fontWeight:700,minHeight:16}}>{d.count>0?d.count:""}</div>
+                <div key={i} style={{flex:1,minWidth:chartDays>30?0:8,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                  {chartDays<=14&&<div style={{fontSize:11,color:C.accent,fontWeight:700,minHeight:16}}>{d.count>0?d.count:""}</div>}
                   <div style={{width:"100%",background:d.count>0?C.accent:C.border,borderRadius:"4px 4px 0 0",
-                    height:maxD>0?Math.max(4,(d.count/maxD)*80)+"px":"4px",
-                    opacity:d.count>0?1:0.25,transition:"height 0.4s ease",position:"relative"}}>
-                    {d.count===Math.max(...days.map(x=>x.count))&&d.count>0&&(
-                      <div style={{position:"absolute",top:-18,left:"50%",transform:"translateX(-50%)",fontSize:8,color:"#F59E0B",fontWeight:900}}>★</div>
+                    height:maxD>0?Math.max(2,(d.count/maxD)*80)+"px":"2px",
+                    opacity:d.count>0?1:0.25,transition:"height 0.3s ease",position:"relative"}}>
+                    {d.count===maxD&&d.count>0&&(
+                      <div style={{position:"absolute",top:-14,left:"50%",transform:"translateX(-50%)",fontSize:8,color:"#F59E0B",fontWeight:900}}>★</div>
                     )}
                   </div>
                 </div>
               ))}
             </div>
-            <div style={{display:"flex",gap:8}}>
+            <div style={{display:"flex",gap:chartDays>30?6:8}}>
               {days.map((d,i)=>(
-                <div key={i} style={{flex:1,textAlign:"center",fontSize:9,color:C.faint,lineHeight:1.3}}>{d.label}</div>
+                <div key={i} style={{flex:1,minWidth:chartDays>30?0:8,textAlign:"center",fontSize:9,color:C.faint,lineHeight:1.3,overflow:"hidden"}}>{d.label}</div>
               ))}
             </div>
           </div>
         );
       })()}
 
-      {/* ── Ranking + Próximas Reuniões — lado a lado ───────────────────── */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:4}}>
-
-        {/* 1. Ranking Vendedores por Reuniões */}
-        {(()=>{
-          const srcLeads = isPosVenda ? posLeads : fl;
-          // Conta leads em stage "Agendou reunião" por responsável
-          const rankMap = {};
-          srcLeads.forEach(l=>{
-            const isAgendado = isPosVenda
-              ? (l.status_envio==="Agendou reunião")
-              : (l.status==="Agendou reunião" || l.funilStage==="r2c" || l.funilStage==="agendou_reuniao" || l.funilStage==="agendou");
-            if(isAgendado){
-              const resp = l.responsible || l.vendedor || "Sem responsável";
-              rankMap[resp]=(rankMap[resp]||0)+1;
-            }
-          });
-          const rank = Object.entries(rankMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
-          const maxR = rank.length ? rank[0][1] : 1;
-          return (
-            <div style={card()}>
-              <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>
-                🏆 Vendedor com mais Reuniões
-              </div>
-              {rank.length===0
-                ? <div style={{fontSize:12,color:C.faint,textAlign:"center",paddingTop:20}}>Nenhuma reunião agendada</div>
-                : rank.map(([name,count],i)=>(
-                  <div key={name} style={{marginBottom:10}}>
-                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                      <span style={{fontSize:11,color:C.text,fontWeight:i===0?700:400}}>
-                        {i===0?"🥇":i===1?"🥈":i===2?"🥉":"  "} {name}
-                      </span>
-                      <span style={{fontSize:11,fontWeight:700,color:i===0?"#F59E0B":C.muted}}>{count}</span>
-                    </div>
-                    <div style={{height:4,background:C.border,borderRadius:4,overflow:"hidden"}}>
-                      <div style={{height:"100%",width:Math.round((count/maxR)*100)+"%",background:i===0?"#F59E0B":i===1?"#94A3B8":"#CD7F32",borderRadius:4}}/>
-                    </div>
-                  </div>
-                ))
-              }
-            </div>
-          );
-        })()}
-
-        {/* 2. Próximas Reuniões */}
-        {(()=>{
-          const srcLeads = isPosVenda ? posLeads : fl;
-          const now = new Date();
-          const in7days = new Date(now.getTime()+7*24*60*60*1000);
-          const upcoming = srcLeads
-            .filter(l=>{
-              const mt = l.meeting_at||l.data_reuniao;
-              if(!mt) return false;
-              const d = new Date(mt);
-              return d>=now && d<=in7days;
-            })
-            .sort((a,b)=>new Date(a.meeting_at||a.data_reuniao)-new Date(b.meeting_at||b.data_reuniao))
-            .slice(0,5);
-          const fmtDate = (s) => {
-            if(!s) return "";
-            const d = new Date(s);
-            return d.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"})+" "+d.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
-          };
-          return (
-            <div style={card()}>
-              <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>
-                📅 Próximas Reuniões (7 dias)
-              </div>
-              {upcoming.length===0
-                ? <div style={{fontSize:12,color:C.faint,textAlign:"center",paddingTop:20}}>Nenhuma reunião nos próximos 7 dias</div>
-                : upcoming.map((l,i)=>(
-                  <div key={l.id||i} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"8px 0",borderBottom:i<upcoming.length-1?"1px solid "+C.border:"none"}}>
-                    <div style={{minWidth:36,height:36,borderRadius:8,background:"#10B98122",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>📅</div>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:11,fontWeight:700,color:C.text,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{l.name||l.company||"—"}</div>
-                      <div style={{fontSize:10,color:"#10B981",fontWeight:600}}>{fmtDate(l.meeting_at||l.data_reuniao)}</div>
-                      {(l.responsible||l.vendedor)&&<div style={{fontSize:9,color:C.faint}}>👤 {l.responsible||l.vendedor}</div>}
-                    </div>
-                  </div>
-                ))
-              }
-            </div>
-          );
-        })()}
-
-      </div> {/* fim grid 1fr 1fr */}
     </div>
   );
 }
@@ -4751,6 +4701,8 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
       priority: "Alta",
       cadence: [],
       createdAt: new Date().toISOString(),
+      responsible: currentUser?.name||currentUser?.full_name||currentUser?.email||null,
+      responsible_id: currentUser?.id||null,
     };
     onAddLead(newLead);
     setForm({name:"",canal:"WhatsApp",phone:"",email:"",notes:"",origem:""});
@@ -5909,17 +5861,10 @@ function AddLead({ onLeadsFound, existingLeads, profile, module="prospeccao" }) 
   return (
     <div style={{maxWidth:780}}>
       <div style={{fontSize:20,fontWeight:800,color:C.text,marginBottom:4}}>Cadastrar Empresa</div>
-      <div style={{fontSize:12,color:C.muted,marginBottom:22}}>Adicione um lead manualmente ou deixe a IA localizar os dados automaticamente</div>
-
-      {/* Mode switcher */}
-      <div style={{display:"flex",background:C.sidebar,borderRadius:12,padding:4,marginBottom:22,width:"fit-content",gap:2}}>
-        {[["manual","✏️ Cadastro Manual"],["ai","✨ Buscar com IA"]].map(([m,l])=>(
-          <button key={m} onClick={()=>{setMode(m);setErr("");setAiError("");setAiResult(null);}} style={{padding:"9px 22px",borderRadius:9,border:"none",background:mode===m?C.panel:"transparent",color:mode===m?C.text:C.dim,fontWeight:mode===m?700:500,fontSize:13,cursor:"pointer",boxShadow:mode===m?"0 1px 4px rgba(0,0,0,0.3)":"none",transition:"all 0.15s"}}>{l}</button>
-        ))}
-      </div>
+      <div style={{fontSize:12,color:C.muted,marginBottom:22}}>Adicione um lead manualmente ao CRM</div>
 
       {/* ── MANUAL MODE ─────────────────────────────────────────────────────── */}
-      {mode==="manual"&&(
+      {(
         <div style={card()}>
           <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:18}}>📋 Dados do Lead</div>
 
@@ -5993,8 +5938,7 @@ function AddLead({ onLeadsFound, existingLeads, profile, module="prospeccao" }) 
         </div>
       )}
 
-      {/* ── AI MODE ─────────────────────────────────────────────────────────── */}
-      {mode==="ai"&&(
+      {false&&(
         <div>
           <div style={card({marginBottom:16})}>
             <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:16}}>✨ Localizar Empresa com IA</div>
@@ -6523,6 +6467,7 @@ function Prospeccao({ currentUser, onAddToProsp }) {
     const patch = {status:stage?.name||stageId};
     if(extra.meeting_at) patch.meeting_at = extra.meeting_at;
     if(extra.responsible) patch.responsible = extra.responsible;
+    if(extra.responsible_id) patch.responsible_id = extra.responsible_id;
     try {
       await sbFetch("leads?id=eq."+lead.id+"&tenant_id=eq."+tenantId,"PATCH",patch);
       await sbFetch("lead_stages","POST",{
@@ -6544,6 +6489,7 @@ function Prospeccao({ currentUser, onAddToProsp }) {
       _fromModal: true,
       meeting_at,
       responsible: meetingForm.responsible,
+      responsible_id: currentUser?.id||null,
     });
     setMeetingModal(null);
   };
@@ -6561,6 +6507,8 @@ function Prospeccao({ currentUser, onAddToProsp }) {
     tenant_id: tenantId,
     created_at: new Date().toISOString(),
     score: data.score||null,
+    responsible: currentUser?.name||currentUser?.full_name||currentUser?.email||null,
+    responsible_id: currentUser?.id||null,
   });
 
   const addLeadExterno = async (data) => {
@@ -7312,6 +7260,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
     await updateStatus(lead, "Agendou reunião", {
       meeting_at,
       responsible,
+      responsible_id: currentUser?.id||null,
       _skipModal: true,
     });
     setMeetingModal(null);
@@ -8862,7 +8811,7 @@ export default function App() {
     const isProspeccao = lead.module==="prospeccao";
     const firstStage = isReceptivo ? RECEPTIVO_STAGES[0] : isProspeccao ? PROSP_STAGES[0] : FUNIL_STAGES[0];
     const firstStageId = isReceptivo ? "r1" : isProspeccao ? PROSP_STAGES[0].id : "f1";
-    const withStage={...lead,funilStage:firstStage?.id||firstStageId,status:firstStage?.name||"Novo contato",tenant_id:user?.tenant_id||null,module:lead.module||"prospeccao"};
+    const withStage={...lead,funilStage:firstStage?.id||firstStageId,status:firstStage?.name||"Novo contato",tenant_id:user?.tenant_id||null,module:lead.module||"prospeccao",responsible_id:lead.responsible_id||user?.id||null};
     try{
       const saved=await sbInsertLead(leadToDb(withStage));
       const newLead=saved&&saved[0]?dbToLead(saved[0]):{...withStage,id:Date.now()};
@@ -8905,6 +8854,8 @@ export default function App() {
       module: "prospeccao",
       tenant_id: tenantId,
       created_at: new Date().toISOString(),
+      responsible: user?.name||user?.full_name||user?.email||null,
+      responsible_id: user?.id||null,
     };
     try {
       const saved = await sbFetch("leads","POST",payload,{"Prefer":"return=representation"});
@@ -9150,7 +9101,6 @@ export default function App() {
           {isMobile&&<button onClick={()=>setMobileMenu(true)} style={{background:"transparent",border:("1px solid "+C.border),borderRadius:6,padding:"6px 9px",cursor:"pointer",color:C.muted,display:"flex",marginRight:4}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg></button>}
           {!open&&!isMobile&&<button onClick={()=>setOpen(true)} style={{background:"transparent",border:("1px solid "+C.border),borderRadius:6,padding:"5px 7px",cursor:"pointer",color:C.muted,display:"flex",alignItems:"center",marginRight:4}}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2" strokeLinecap="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg></button>}
           <div style={{fontSize:15,fontWeight:700,color:C.text,flex:1}}>{nav.find(n=>n.id===page)?.label}</div>
-          {!profileComplete&&hasAccess("profile")&&page!=="profile"&&<button onClick={()=>setPage("profile")} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:8,border:"1px solid #FBBF2444",background:"rgba(251,191,36,0.08)",color:"#FBBF24",fontSize:11,fontWeight:700,cursor:"pointer"}}>⚠️ Configure o Perfil da Empresa</button>}
           {isOwner&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 12px",borderRadius:20,background:"rgba(168,85,247,0.12)",border:"1px solid rgba(168,85,247,0.3)"}}>
             <div style={{width:6,height:6,borderRadius:"50%",background:"#A855F7",flexShrink:0}}/>
             <span style={{fontSize:11,color:"#A855F7",fontWeight:700}}>◆ Owner</span>
