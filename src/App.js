@@ -2540,7 +2540,7 @@ function SearchLeads({onLeadsFound, onAddToProsp=null, existingLeads=[], profile
       {webhookUrl&&(
         <div style={{display:"flex",gap:0,marginBottom:16,border:"1px solid "+C.border,borderRadius:8,overflow:"hidden",width:"fit-content"}}>
           <button style={{padding:"7px 16px",border:"none",background:C.accent,color:"#fff",fontSize:11,fontWeight:700,cursor:"default"}}>
-            🔗 N8N (Google Places)
+            Google Places
           </button>
         </div>
       )}
@@ -2598,7 +2598,7 @@ function SearchLeads({onLeadsFound, onAddToProsp=null, existingLeads=[], profile
         {/* N8N info */}
         {mode==="n8n"&&webhookUrl&&!loading&&(
           <div style={{marginTop:12,padding:"8px 12px",background:C.accent+"08",border:"1px solid "+C.accent+"22",borderRadius:6,fontSize:11,color:C.muted}}>
-            🔗 Payload enviado ao N8N: <code style={{color:C.accent}}>segmento, cidade, quantidade, tenant_id, user_id</code>
+            Payload enviado: <code style={{color:C.accent}}>segmento, cidade, quantidade, tenant_id, user_id</code>
           </div>
         )}
         {mode==="n8n"&&!webhookUrl&&(
