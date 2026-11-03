@@ -7309,7 +7309,12 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
   const [filtro,   setFiltro]   = useState("todos");
   const [busca,    setBusca]    = useState("");
   // Colunas expandidas no kanban — por padrão todas fechadas
-  const [expandedCols, setExpandedCols] = useState({});
+  const initPvCols = () => {
+    const agCols = ["ag_agenda_pendente","ag_agenda_erro","ag_agenda_processado"].reduce((acc,k)=>({...acc,[k]:true}),{});
+    const pvCols = ["Enviado","Respondeu","Agendou reunião","Proposta","Fechado","Sem resposta","Erro"].reduce((acc,s)=>({...acc,["pv_"+s]:true}),{});
+    return {...agCols,...pvCols};
+  };
+  const [expandedCols, setExpandedCols] = useState(initPvCols);
   const toggleCol = (key) => setExpandedCols(p=>({...p,[key]:!p[key]}));
   const [showForm, setShowForm] = useState(false); // modal novo cliente
   const [showAgForm, setShowAgForm] = useState(null); // lead selecionado para agendar
@@ -7727,7 +7732,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
                   {status:"Erro",       source:"agenda_erro",      color:"#EF4444", icon:"⚠️"},
                   {status:"Agendado",   source:"agenda_processado",color:"#8B5CF6", icon:"🕐"},
                 ].map(({status,source,color,icon})=>{
-                  const stageLeads = clientes.filter(c=>c._source===source);
+                  const stageLeads = filtered.filter(c=>c._source===source);
                   const colKey = "ag_"+source;
                   const expanded = !!expandedCols[colKey];
                   return (
@@ -7791,7 +7796,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
               <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8}}>
                 {PV_STATUS_EDITAVEIS.map(status=>{
                   const {color,icon} = pvMeta(status);
-                  const stageLeads = clientes.filter(c=>!c._source&&c.status_envio===status);
+                  const stageLeads = filtered.filter(c=>!c._source&&c.status_envio===status);
                   const colKey = "pv_"+status;
                   const expanded = !!expandedCols[colKey];
                   return (
