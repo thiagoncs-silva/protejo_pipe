@@ -4716,7 +4716,7 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
   const toggleCol = (key) => setExpandedCols(p=>({...p,[key]:!p[key]}));
   const tenantId = currentUser?.tenant_id || null;
   // Visibilidade por usuário
-  const [verTodosRec, setVerTodosRec] = useState(()=>isManager(currentUser));
+  const [verTodosRec, setVerTodosRec] = useState(false);
   const [reatribuirLeadRec, setReatribuirLeadRec] = useState(null);
   const [tenantUsersRec, setTenantUsersRec] = useState([]);
   const canManageRec = isManager(currentUser);
@@ -4724,7 +4724,7 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
   const abrirReatribuicaoRec = async (lead) => {
     setReatribuirLeadRec(lead);
     if(tenantUsersRec.length===0){
-      const users = await getTenantUsers(tenantId).catch(()=>[]);
+      const users = await sbAuth.getTenantUsers(tenantId).catch(()=>[]);
       setTenantUsersRec(Array.isArray(users)?users:[]);
     }
   };
@@ -4848,17 +4848,28 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
           {canManageRec&&(
-            <button onClick={()=>setVerTodosRec(v=>!v)}
-              style={{...btnG,padding:"9px 14px",fontSize:12,background:verTodosRec?(C.accent+"22"):"transparent",
-                border:"1px solid "+(verTodosRec?C.accent:C.border),color:verTodosRec?C.accent:C.muted,fontWeight:verTodosRec?700:400}}>
-              {verTodosRec?"👥 Ver todos":"👤 Só os meus"}
-            </button>
+            <div onClick={()=>setVerTodosRec(v=>!v)}
+              style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",padding:"6px 10px",borderRadius:8,border:"1px solid "+C.border,background:C.card,userSelect:"none"}}
+              title={verTodosRec?"Clique para ver só os seus":"Clique para ver todos"}>
+              <span style={{fontSize:11,color:C.muted,fontWeight:500}}>{verTodosRec?"Todos":"Só os meus"}</span>
+              <div style={{position:"relative",width:36,height:20,borderRadius:10,background:verTodosRec?C.accent:"#6B7280",transition:"background 0.2s"}}>
+                <div style={{position:"absolute",top:3,left:verTodosRec?17:3,width:14,height:14,borderRadius:"50%",background:"#fff",transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)"}}/>
+              </div>
+            </div>
           )}
           <button onClick={()=>setShowAdd(true)} style={{...btnP,padding:"9px 18px",fontSize:13}}>
             + Novo Contato
           </button>
         </div>
       </div>
+
+      {/* Banner ver todos — Receptivo */}
+      {canManageRec&&verTodosRec&&(
+        <div style={{marginBottom:14,padding:"10px 16px",background:"#F59E0B18",border:"1px solid #F59E0B44",borderRadius:8,display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:14}}>👥</span>
+          <span style={{fontSize:12,color:"#F59E0B",fontWeight:600}}>Modo administrador ativo — você está vendo os contatos de <strong>todos os usuários</strong></span>
+        </div>
+      )}
 
       {/* KPIs */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}} className="mob-grid-2">
@@ -6528,7 +6539,7 @@ function Prospeccao({ currentUser, onAddToProsp }) {
   const [busca, setBusca]     = useState("");
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving]   = useState(false);
-  const [verTodos, setVerTodos] = useState(()=>isManager(currentUser)); // manager: ver leads de todos
+  const [verTodos, setVerTodos] = useState(false); // manager: ver leads de todos
   const [reatribuirLead, setReatribuirLead] = useState(null); // lead a reatribuir
   const [tenantUsers, setTenantUsers] = useState([]); // usuários para reatribuição
   const [form, setForm] = useState({
@@ -6710,7 +6721,7 @@ function Prospeccao({ currentUser, onAddToProsp }) {
   const abrirReatribuicao = async (lead) => {
     setReatribuirLead(lead);
     if(tenantUsers.length===0){
-      const users = await getTenantUsers(tenantId).catch(()=>[]);
+      const users = await sbAuth.getTenantUsers(tenantId).catch(()=>[]);
       setTenantUsers(Array.isArray(users)?users:[]);
     }
   };
@@ -6725,11 +6736,14 @@ function Prospeccao({ currentUser, onAddToProsp }) {
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
           {canManage&&(
-            <button onClick={()=>setVerTodos(v=>!v)}
-              style={{...btnG,padding:"9px 14px",fontSize:12,background:verTodos?(C.accent+"22"):"transparent",
-                border:"1px solid "+(verTodos?C.accent:C.border),color:verTodos?C.accent:C.muted,fontWeight:verTodos?700:400}}>
-              {verTodos?"👥 Ver todos":"👤 Só os meus"}
-            </button>
+            <div onClick={()=>setVerTodos(v=>!v)}
+              style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",padding:"6px 10px",borderRadius:8,border:"1px solid "+C.border,background:C.card,userSelect:"none"}}
+              title={verTodos?"Clique para ver só os seus":"Clique para ver todos"}>
+              <span style={{fontSize:11,color:C.muted,fontWeight:500}}>{verTodos?"Todos":"Só os meus"}</span>
+              <div style={{position:"relative",width:36,height:20,borderRadius:10,background:verTodos?C.accent:"#6B7280",transition:"background 0.2s"}}>
+                <div style={{position:"absolute",top:3,left:verTodos?17:3,width:14,height:14,borderRadius:"50%",background:"#fff",transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)"}}/>
+              </div>
+            </div>
           )}
           <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="Buscar..." style={{...inp,width:160,padding:"7px 10px",fontSize:12}}/>
           <button onClick={load} title="Atualizar leads" style={{...btnG,padding:"9px 12px",fontSize:13}}>🔄</button>
@@ -6779,6 +6793,14 @@ function Prospeccao({ currentUser, onAddToProsp }) {
           </button>
         ))}
       </div>
+
+      {/* Banner ver todos — Prospecção */}
+      {canManage&&verTodos&&(
+        <div style={{marginBottom:14,padding:"10px 16px",background:"#F59E0B18",border:"1px solid #F59E0B44",borderRadius:8,display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:14}}>👥</span>
+          <span style={{fontSize:12,color:"#F59E0B",fontWeight:600}}>Modo administrador ativo — você está vendo os leads de <strong>todos os usuários</strong></span>
+        </div>
+      )}
 
       {loading&&<div style={{textAlign:"center",padding:40,color:C.muted}}>Carregando...</div>}
 
@@ -7329,7 +7351,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
   const [meetingModal, setMeetingModal] = useState(null); // {lead}
   const [meetingForm, setMeetingForm]   = useState({ meeting_at_date:"", meeting_at_time:"", responsible:"" });
   // Visibilidade por usuário
-  const [verTodosPv, setVerTodosPv] = useState(()=>isManager(currentUser));
+  const [verTodosPv, setVerTodosPv] = useState(false);
   const [reatribuirLeadPv, setReatribuirLeadPv] = useState(null);
   const [tenantUsersPv, setTenantUsersPv] = useState([]);
 
@@ -7340,7 +7362,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
   const abrirReatribuicaoPv = async (lead) => {
     setReatribuirLeadPv(lead);
     if(tenantUsersPv.length===0){
-      const users = await getTenantUsers(tenantId).catch(()=>[]);
+      const users = await sbAuth.getTenantUsers(tenantId).catch(()=>[]);
       setTenantUsersPv(Array.isArray(users)?users:[]);
     }
   };
@@ -7652,11 +7674,16 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
           {canManagePv&&(
-            <button onClick={()=>setVerTodosPv(v=>!v)}
-              style={{...btnG,padding:"9px 14px",fontSize:12,background:verTodosPv?(C.accent+"22"):"transparent",
-                border:"1px solid "+(verTodosPv?C.accent:C.border),color:verTodosPv?C.accent:C.muted,fontWeight:verTodosPv?700:400}}>
-              {verTodosPv?"👥 Ver todos":"👤 Só os meus"}
-            </button>
+            <div onClick={()=>setVerTodosPv(v=>!v)}
+              style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",padding:"6px 10px",borderRadius:8,border:"1px solid "+C.border,background:C.card,userSelect:"none"}}
+              title={verTodosPv?"Clique para ver só os seus":"Clique para ver todos"}>
+              <span style={{fontSize:11,color:C.muted,fontWeight:500}}>{verTodosPv?"Todos":"Só os meus"}</span>
+              {/* Track */}
+              <div style={{position:"relative",width:36,height:20,borderRadius:10,background:verTodosPv?C.accent:"#6B7280",transition:"background 0.2s"}}>
+                {/* Thumb */}
+                <div style={{position:"absolute",top:3,left:verTodosPv?17:3,width:14,height:14,borderRadius:"50%",background:"#fff",transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)"}}/>
+              </div>
+            </div>
           )}
           <button onClick={()=>setShowForm(true)} style={{...btnP,padding:"9px 18px",fontSize:13}}>+ Novo Cliente</button>
           <button onClick={loadClientes} style={{...btnG,padding:"8px 14px",fontSize:12}}>🔄 Atualizar</button>
@@ -7664,6 +7691,14 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
       </div>
 
       {error&&<div style={{marginBottom:16,padding:"10px 14px",background:"rgba(248,113,113,0.1)",border:"1px solid #F87171",borderRadius:8,fontSize:12,color:"#F87171"}}>{error}<button onClick={()=>setError("")} style={{marginLeft:8,background:"transparent",border:"none",color:"#F87171",cursor:"pointer"}}>✕</button></div>}
+
+      {/* Banner ver todos — Pós-venda */}
+      {canManagePv&&verTodosPv&&(
+        <div style={{marginBottom:14,padding:"10px 16px",background:"#F59E0B18",border:"1px solid #F59E0B44",borderRadius:8,display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:14}}>👥</span>
+          <span style={{fontSize:12,color:"#F59E0B",fontWeight:600}}>Modo administrador ativo — você está vendo os clientes de <strong>todos os usuários</strong></span>
+        </div>
+      )}
 
       {/* KPIs */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12,marginBottom:20}} className="mob-grid-2">
