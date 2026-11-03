@@ -5690,7 +5690,8 @@ function MasterPanel({ currentUser }) {
     setTimeout(()=>setOk(""),3000);
   };
 
-  const stats={total:users.length,ativos:users.filter(u=>u.status==="ativo").length,cancelados:users.filter(u=>u.status==="cancelado").length,admins:users.filter(u=>u.role==="admin").length};
+  const isAtivo = u => u.status==="ativo"||u.status==="active";
+  const stats={total:users.length,ativos:users.filter(isAtivo).length,cancelados:users.filter(u=>u.status==="cancelado"||u.status==="inactive").length,admins:users.filter(u=>["admin","owner","master"].includes(u.role)).length};
   const gold="#F59E0B";
   const th={textAlign:"left",padding:"10px 16px",fontSize:10,color:C.muted,letterSpacing:1.2,textTransform:"uppercase",fontWeight:700,borderBottom:("1px solid "+C.border)};
   const td={padding:"11px 16px",borderBottom:("1px solid "+C.panel),verticalAlign:"middle"};
@@ -5855,8 +5856,8 @@ function MasterPanel({ currentUser }) {
                         </span>
                       </td>
                       <td style={td}>
-                        <span style={{fontSize:11,fontWeight:700,color:u.status==="ativo"?"#4ADE80":"#F87171",background:u.status==="ativo"?"rgba(74,222,128,0.12)":"rgba(248,113,113,0.12)",padding:"3px 10px",borderRadius:20}}>
-                          {u.status==="ativo"?"● Ativo":"✕ Cancelado"}
+                        <span style={{fontSize:11,fontWeight:700,color:isAtivo(u)?"#4ADE80":"#F87171",background:isAtivo(u)?"rgba(74,222,128,0.12)":"rgba(248,113,113,0.12)",padding:"3px 10px",borderRadius:20}}>
+                          {isAtivo(u)?"● Ativo":"✕ Cancelado"}
                         </span>
                       </td>
                       <td style={{...td,fontSize:11,color:C.faint}}>{u.created_at?new Date(u.created_at).toLocaleDateString("pt-BR"):"-"}</td>
@@ -5866,7 +5867,7 @@ function MasterPanel({ currentUser }) {
                           : <div style={{display:"flex",gap:6}}>
                               <button onClick={()=>resetPwd(u.id)} style={{...btnG,padding:"5px 10px",fontSize:11}}>🔑 Reset</button>
                               {u.role!=="owner"&&<button onClick={()=>openPerms(u)} style={{display:"inline-flex",alignItems:"center",gap:4,padding:"5px 10px",borderRadius:8,border:"1px solid "+gold+"44",background:gold+"10",color:gold,fontSize:11,fontWeight:600,cursor:"pointer"}}>🔐 Perms</button>}
-                              {u.status==="ativo"
+                              {isAtivo(u)
                                 ? <button onClick={()=>setConfirmId(u.id)} style={{...btnD,padding:"5px 10px",fontSize:11}}>✕ Cancelar</button>
                                 : <button onClick={()=>reactivate(u.id)} style={{display:"inline-flex",alignItems:"center",gap:5,padding:"5px 12px",borderRadius:8,border:"1px solid #4ADE8033",background:"rgba(74,222,128,0.1)",color:"#4ADE80",fontSize:11,fontWeight:600,cursor:"pointer"}}>✓ Reativar</button>
                               }
@@ -7435,12 +7436,15 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
         .map(normaliza);
       const pvRows = (Array.isArray(rows)?rows:[]).map(r=>({
         ...r,
+        _source: r._source||"pos_venda",
         status_envio: normalizaPvStatus(r.status_envio)||"Aguardando",
         nome_formatado: r.nome
           ? r.nome.split(" ")[0].charAt(0).toUpperCase()+r.nome.split(" ")[0].slice(1).toLowerCase()
           : r.nome,
         // garante alias de telefone
         celular: r.celular||r.whatsapp||r.telefone||"",
+        // garante responsible_id explicitamente nulo se não existir
+        responsible_id: r.responsible_id||null,
       }));
       const leadsNorm = (Array.isArray(leadsRows)?leadsRows:[]).map(normalizaLead);
       // Deduplicar por telefone entre leads e pvRows (leads têm prioridade)
@@ -7565,7 +7569,8 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
       city: item.city||"",
       module: "pos_venda",
       status: "Aguardando",
-      responsible: item.vendedor||null,
+      responsible: item.vendedor||currentUser?.full_name||currentUser?.name||currentUser?.email||null,
+      responsible_id: currentUser?.id||null,
       meeting_at: toISO(item.data_agendamento, item.hora_agendamento)||null,
       created_at: now,
     }));
