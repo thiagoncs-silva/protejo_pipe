@@ -7431,10 +7431,9 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
         };
       };
 
-      // Exclui "processado" da agenda — esses já existem em pos_venda como registros reais
-      const agendaRows = (Array.isArray(agenda)?agenda:[])
-        .filter(a=>a.status!=="processado")
-        .map(normaliza);
+      // Inclui TODOS os registros da agenda (pendente, erro, processado)
+      // "processado" não garante existência em pos_venda — pode ter ficado só na agenda
+      const agendaRows = (Array.isArray(agenda)?agenda:[]).map(normaliza);
       const pvRows = (Array.isArray(rows)?rows:[]).map(r=>({
         ...r,
         _source: r._source||"pos_venda",
@@ -7448,10 +7447,16 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
         responsible_id: r.responsible_id||null,
       }));
       const leadsNorm = (Array.isArray(leadsRows)?leadsRows:[]).map(normalizaLead);
-      // Deduplicar por telefone entre leads e pvRows (leads têm prioridade)
+      // Deduplicar: leads têm prioridade > pos_venda > agenda
+      // Remove da agenda qualquer registro cujo telefone já aparece em leads ou pos_venda
       const leadsPhones = new Set(leadsNorm.map(l=>l.celular||"").filter(Boolean));
       const pvRowsFiltrado = pvRows.filter(r=>!leadsPhones.has(r.celular||""));
-      setClientes([...leadsNorm, ...agendaRows, ...pvRowsFiltrado]);
+      const pvPhones = new Set(pvRowsFiltrado.map(r=>r.celular||"").filter(Boolean));
+      const agendaFiltrada = agendaRows.filter(a=>{
+        const tel = a.celular||a.whatsapp||"";
+        return !leadsPhones.has(tel) && !pvPhones.has(tel);
+      });
+      setClientes([...leadsNorm, ...pvRowsFiltrado, ...agendaFiltrada]);
       console.log("[PosVenda] leads:", leadsNorm.length, "agenda:", agendaRows.length, "pos_venda legacy:", pvRowsFiltrado.length);
       setLeadStages([]);
       setError("");
