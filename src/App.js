@@ -2005,36 +2005,17 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
 
   useEffect(()=>{
     if(!tenantId) return;
-    Promise.all([
-      // 1. leads com module=pos_venda (fonte nova, prioritária)
-      sbFetch("leads?select=*&tenant_id=eq."+tenantId+"&module=eq.pos_venda&order=created_at.desc").catch(()=>[]),
-      // 2. tabela legada pos_venda (deduplicada por telefone contra fonte 1)
-      sbFetch("pos_venda?select=*&tenant_id=eq."+tenantId+"&order=data_envio.desc").catch(()=>[]),
-    ]).then(([leadsRows, pvRows])=>{
-      // Normaliza leads (tabela leads)
-      const leadsNorm = (Array.isArray(leadsRows)?leadsRows:[]).map(r=>({
-        ...r,
-        status_envio: normalizePvStatus(r.status||r.status_envio),
-        celular: r.phone||r.celular||"",
-        data_envio: r.created_at,
-      }));
-      // Normaliza legado pos_venda — exclui telefones já presentes em leads
-      const leadsPhones = new Set(leadsNorm.map(l=>l.celular||"").filter(Boolean));
-      const pvNorm = (Array.isArray(pvRows)?pvRows:[])
-        .filter(r=>{
-          const tel = (r.celular||r.whatsapp||r.telefone||"").replace(/\D/g,"");
-          return !leadsPhones.has(tel) && !leadsPhones.has(r.celular||r.whatsapp||r.telefone||"");
-        })
-        .map(r=>({
+    sbFetch("pos_venda?select=*&tenant_id=eq."+tenantId+"&order=data_envio.desc")
+      .then(rows=>{
+        const normalized = (Array.isArray(rows)?rows:[]).map(r=>({
           ...r,
           status_envio: normalizePvStatus(r.status_envio),
           celular: r.celular||r.whatsapp||r.telefone||"",
           data_envio: r.data_envio||r.data_cadastro||r.created_at,
         }));
-      // Agenda NÃO é incluída no Dashboard — é fila de processamento, não clientes reais
-      // Os registros da agenda que viraram clientes já estão em pos_venda (status processado)
-      setPosVendaData([...leadsNorm, ...pvNorm]);
-    }).catch(()=>{});
+        setPosVendaData(normalized);
+      })
+      .catch(()=>{});
   },[tenantId]);
 
   // Filtros por módulo — pos_venda agora usa leads com module=pos_venda
