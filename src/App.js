@@ -353,6 +353,7 @@ const sanitize = (s) => String(s||"").replace(/[<>]/g,"").trim().slice(0,500);
 const sanitizeForPrompt = (s) => String(s||"").replace(/[$\\]/g,"").trim().slice(0,300);
 class RateLimiter { constructor(max,ms){this.max=max;this.ms=ms;this.calls=[];} check(){const now=Date.now();this.calls=this.calls.filter(t=>now-t<this.ms);if(this.calls.length>=this.max)return false;this.calls.push(now);return true;} }
 const verifyOwner = (user) => user?.role==="owner";
+const isManager = (user) => ["owner","admin","master"].includes((user?.role||"").toLowerCase());
 
 
 const inp = { width:"100%", background:C.sidebar, border:("1px solid "+C.border), borderRadius:8, padding:"9px 12px", color:C.text, fontSize:13, outline:"none", boxSizing:"border-box", fontFamily:"inherit" };
@@ -4714,9 +4715,37 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
   const [expandedCols, setExpandedCols] = useState(initRecCols);
   const toggleCol = (key) => setExpandedCols(p=>({...p,[key]:!p[key]}));
   const tenantId = currentUser?.tenant_id || null;
+  // Visibilidade por usuário
+  const [verTodosRec, setVerTodosRec] = useState(false);
+  const [reatribuirLeadRec, setReatribuirLeadRec] = useState(null);
+  const [tenantUsersRec, setTenantUsersRec] = useState([]);
+  const canManageRec = isManager(currentUser);
 
-  // Filter only receptivo leads
-  const recLeads = leads.filter(l=>l.module==="receptivo");
+  const abrirReatribuicaoRec = async (lead) => {
+    setReatribuirLeadRec(lead);
+    if(tenantUsersRec.length===0){
+      const users = await getTenantUsers(tenantId).catch(()=>[]);
+      setTenantUsersRec(Array.isArray(users)?users:[]);
+    }
+  };
+
+  const reatribuirRec = async (lead, novoUsuario) => {
+    if(!lead||!novoUsuario) return;
+    try {
+      await sbFetch("leads?id=eq."+lead.id+"&tenant_id=eq."+tenantId, "PATCH", {
+        responsible_id: novoUsuario.id,
+        responsible: novoUsuario.full_name||novoUsuario.name||novoUsuario.email,
+      });
+      onUpdateLead({...lead, responsible_id:novoUsuario.id, responsible:novoUsuario.full_name||novoUsuario.name||novoUsuario.email});
+      setReatribuirLeadRec(null);
+    } catch(e){ alert("Erro ao reatribuir: "+e.message); }
+  };
+
+  // Filter only receptivo leads + visibility
+  const allRecLeads = leads.filter(l=>l.module==="receptivo");
+  const recLeads = canManageRec && verTodosRec
+    ? allRecLeads
+    : allRecLeads.filter(l=>l.responsible_id===currentUser?.id || (!l.responsible_id && canManageRec));
 
   // Stats
   const hoje = recLeads.filter(l=>{
@@ -4817,9 +4846,18 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
           <div style={{fontSize:20,fontWeight:800,color:C.text}}>📥 Receptivo</div>
           <div style={{fontSize:12,color:C.muted,marginTop:2}}>Gerencie leads que chegam até você</div>
         </div>
-        <button onClick={()=>setShowAdd(true)} style={{...btnP,padding:"9px 18px",fontSize:13}}>
-          + Novo Contato
-        </button>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          {canManageRec&&(
+            <button onClick={()=>setVerTodosRec(v=>!v)}
+              style={{...btnG,padding:"9px 14px",fontSize:12,background:verTodosRec?(C.accent+"22"):"transparent",
+                border:"1px solid "+(verTodosRec?C.accent:C.border),color:verTodosRec?C.accent:C.muted,fontWeight:verTodosRec?700:400}}>
+              {verTodosRec?"👥 Ver todos":"👤 Só os meus"}
+            </button>
+          )}
+          <button onClick={()=>setShowAdd(true)} style={{...btnP,padding:"9px 18px",fontSize:13}}>
+            + Novo Contato
+          </button>
+        </div>
       </div>
 
       {/* KPIs */}
@@ -4913,6 +4951,18 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
                           <span style={{fontSize:9,color:C.faint}}>{hoursAgo(l.createdAt)}</span>
                         </div>
                         {l.notes&&<div style={{fontSize:10,color:C.dim,fontStyle:"italic"}}>{l.notes.substring(0,50)}{l.notes.length>50?"...":""}</div>}
+                        {/* Responsável + reatribuir (só manager em ver todos) */}
+                        {canManageRec&&verTodosRec&&(
+                          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:6,marginBottom:2}}>
+                            <span style={{fontSize:9,color:C.accent,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:100}}>
+                              👤 {l.responsible||"Sem responsável"}
+                            </span>
+                            <button onClick={e=>{e.stopPropagation();abrirReatribuicaoRec(l);}}
+                              style={{fontSize:9,padding:"2px 6px",borderRadius:4,border:"1px solid "+C.border,background:"transparent",color:C.muted,cursor:"pointer"}}>
+                              Reatribuir
+                            </button>
+                          </div>
+                        )}
                         <div style={{marginTop:8}}>
                           <select value={l.funilStage||"r1"} onClick={e=>e.stopPropagation()}
                             onChange={e=>updateStage(l,e.target.value)}
@@ -4955,6 +5005,12 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
                   </div>
                   <div style={{fontSize:11,color:stage?.color||C.accent,fontWeight:700}}>{l.status}</div>
                   {urgent&&<span style={{fontSize:9,color:"#F87171",fontWeight:700}}>⚠️</span>}
+                  {canManageRec&&verTodosRec&&(
+                    <button onClick={e=>{e.stopPropagation();abrirReatribuicaoRec(l);}}
+                      style={{fontSize:10,padding:"3px 8px",borderRadius:4,border:"1px solid "+C.border,background:"transparent",color:C.muted,cursor:"pointer"}}>
+                      Reatribuir
+                    </button>
+                  )}
                 </div>
               );
             })
@@ -6386,6 +6442,33 @@ function Reativacao({ leads, onUpdateLead, onSetPage }) {
       )}
 
       {/* Modal — Agendou Reunião */}
+      {/* Modal: Reatribuir lead (Receptivo) */}
+      {reatribuirLeadRec&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+          onClick={()=>setReatribuirLeadRec(null)}>
+          <div style={{...card({padding:24}),width:340,maxWidth:"90vw"}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontSize:15,fontWeight:700,color:C.text,marginBottom:6}}>🔄 Reatribuir lead</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:16}}>{reatribuirLeadRec.name}</div>
+            <div style={{fontSize:11,color:C.faint,marginBottom:8}}>Responsável atual: {reatribuirLeadRec.responsible||"Sem responsável"}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:280,overflowY:"auto",marginBottom:16}}>
+              {tenantUsersRec.length===0
+                ?<div style={{color:C.faint,fontSize:12,padding:8}}>Carregando usuários...</div>
+                :tenantUsersRec.filter(u=>u.id!==reatribuirLeadRec.responsible_id).map(u=>(
+                  <button key={u.id} onClick={()=>reatribuirRec(reatribuirLeadRec,u)}
+                    style={{textAlign:"left",padding:"10px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.text,cursor:"pointer",fontSize:12}}
+                    onMouseEnter={e=>e.currentTarget.style.background=C.accent+"18"}
+                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <div style={{fontWeight:600}}>{u.full_name||u.name||u.email}</div>
+                    <div style={{fontSize:10,color:C.muted}}>{u.email}</div>
+                  </button>
+                ))
+              }
+            </div>
+            <button onClick={()=>setReatribuirLeadRec(null)} style={{...btnG,width:"100%"}}>Cancelar</button>
+          </div>
+        </div>
+      )}
+
       {meetingModal&&(
         <div style={{position:"fixed",inset:0,zIndex:600,background:"rgba(6,14,28,0.85)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
           onClick={()=>setMeetingModal(null)}>
@@ -6444,6 +6527,9 @@ function Prospeccao({ currentUser, onAddToProsp }) {
   const [busca, setBusca]     = useState("");
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving]   = useState(false);
+  const [verTodos, setVerTodos] = useState(false); // manager: ver leads de todos
+  const [reatribuirLead, setReatribuirLead] = useState(null); // lead a reatribuir
+  const [tenantUsers, setTenantUsers] = useState([]); // usuários para reatribuição
   const [form, setForm] = useState({
     name:"", company:"", phone:"", email:"",
     channel:"whatsapp", notes:"", city:"",
@@ -6599,7 +6685,35 @@ function Prospeccao({ currentUser, onAddToProsp }) {
     return Math.floor(diff/1440)+"d";
   };
   const CHANNEL_COLOR = {whatsapp:"#25D366",email:"#3B82F6",ligacao:"#F59E0B",instagram:"#E1306C",indicacao:"#8B5CF6"};
-  const visLeads = leads.filter(l=>!busca||l.name?.toLowerCase().includes(busca.toLowerCase())||l.company?.toLowerCase().includes(busca.toLowerCase()));
+  const canManage = isManager(currentUser);
+  // Filtro de visibilidade: user vê só os seus; manager em modo "ver todos" vê todos
+  const leadsVisiveis = canManage && verTodos
+    ? leads // manager vendo todos
+    : leads.filter(l=>l.responsible_id===currentUser?.id || (!l.responsible_id && canManage));
+  // sem responsible_id só aparece para manager (no ver todos)
+  const visLeads = leadsVisiveis.filter(l=>!busca||l.name?.toLowerCase().includes(busca.toLowerCase())||l.company?.toLowerCase().includes(busca.toLowerCase()));
+
+  // Reatribuição: atualiza responsible_id + responsible no banco
+  const reatribuir = async (lead, novoUsuario) => {
+    if(!lead||!novoUsuario) return;
+    try {
+      await sbFetch("leads?id=eq."+lead.id+"&tenant_id=eq."+tenantId, "PATCH", {
+        responsible_id: novoUsuario.id,
+        responsible: novoUsuario.full_name||novoUsuario.name||novoUsuario.email,
+      });
+      setLeads(ls=>ls.map(l=>l.id===lead.id?{...l,responsible_id:novoUsuario.id,responsible:novoUsuario.full_name||novoUsuario.name||novoUsuario.email}:l));
+      setReatribuirLead(null);
+    } catch(e){ alert("Erro ao reatribuir: "+e.message); }
+  };
+
+  // Carrega usuários do tenant para reatribuição (só quando manager abre modal)
+  const abrirReatribuicao = async (lead) => {
+    setReatribuirLead(lead);
+    if(tenantUsers.length===0){
+      const users = await getTenantUsers(tenantId).catch(()=>[]);
+      setTenantUsers(Array.isArray(users)?users:[]);
+    }
+  };
 
   return (
     <div>
@@ -6609,12 +6723,40 @@ function Prospeccao({ currentUser, onAddToProsp }) {
           <div style={{fontSize:20,fontWeight:800,color:C.text}}>🎯 Prospecção</div>
           <div style={{fontSize:12,color:C.muted,marginTop:2}}>Leads vindos da busca ou cadastrados manualmente</div>
         </div>
-        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          {canManage&&(
+            <button onClick={()=>setVerTodos(v=>!v)}
+              style={{...btnG,padding:"9px 14px",fontSize:12,background:verTodos?(C.accent+"22"):"transparent",
+                border:"1px solid "+(verTodos?C.accent:C.border),color:verTodos?C.accent:C.muted,fontWeight:verTodos?700:400}}>
+              {verTodos?"👥 Ver todos":"👤 Só os meus"}
+            </button>
+          )}
           <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="Buscar..." style={{...inp,width:160,padding:"7px 10px",fontSize:12}}/>
           <button onClick={load} title="Atualizar leads" style={{...btnG,padding:"9px 12px",fontSize:13}}>🔄</button>
           <button onClick={()=>setShowForm(true)} style={{...btnP,padding:"9px 18px",fontSize:13}}>+ Cadastrar</button>
         </div>
       </div>
+
+      {/* Modal reatribuição — Prospecção */}
+      {reatribuirLead&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{...card({padding:24}),width:340,maxWidth:"90vw"}}>
+            <div style={{fontSize:15,fontWeight:700,color:C.text,marginBottom:4}}>Reatribuir lead</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:16}}>{reatribuirLead.name}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:260,overflowY:"auto"}}>
+              {tenantUsers.filter(u=>u.id!==reatribuirLead.responsible_id).map(u=>(
+                <button key={u.id} onClick={()=>reatribuir(reatribuirLead,u)}
+                  style={{...btnG,textAlign:"left",padding:"10px 14px",fontSize:13}}>
+                  <span style={{fontWeight:600}}>{u.full_name||u.name}</span>
+                  <span style={{color:C.faint,fontSize:11,marginLeft:8}}>{u.email}</span>
+                </button>
+              ))}
+              {tenantUsers.length===0&&<div style={{color:C.faint,fontSize:12}}>Carregando usuários...</div>}
+            </div>
+            <button onClick={()=>setReatribuirLead(null)} style={{...btnG,marginTop:16,width:"100%"}}>Cancelar</button>
+          </div>
+        </div>
+      )}
 
       {error&&<div style={{...card({padding:12}),color:"#F87171",fontSize:12,marginBottom:16}}>{error}</div>}
 
@@ -6674,7 +6816,19 @@ function Prospeccao({ currentUser, onAddToProsp }) {
                           </div>
                           <div style={{fontSize:11,fontWeight:700,color:C.text,marginBottom:2}}>{l.name||l.company}</div>
                           <div style={{fontSize:10,color:C.muted,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.company||"—"}</div>
-                          {l.city&&<div style={{fontSize:9,color:C.faint,marginBottom:7}}>📍 {l.city}</div>}
+                          {l.city&&<div style={{fontSize:9,color:C.faint,marginBottom:4}}>📍 {l.city}</div>}
+                          {/* Responsável — visível quando manager vê todos */}
+                          {canManage&&verTodos&&(
+                            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5}}>
+                              <span style={{fontSize:9,color:C.accent,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:100}}>
+                                👤 {l.responsible||"Sem responsável"}
+                              </span>
+                              <button onClick={e=>{e.stopPropagation();abrirReatribuicao(l);}}
+                                style={{fontSize:9,padding:"2px 6px",borderRadius:4,border:"1px solid "+C.border,background:"transparent",color:C.muted,cursor:"pointer"}}>
+                                Reatribuir
+                              </button>
+                            </div>
+                          )}
                           <select value={getStageId(l)} onChange={e=>{e.stopPropagation();moveStage(l,e.target.value);}}
                             onClick={e=>e.stopPropagation()}
                             style={{width:"100%",fontSize:9,background:C.bg,border:"1px solid "+C.border,borderRadius:6,color:C.muted,padding:"3px 4px",cursor:"pointer"}}>
@@ -7169,9 +7323,45 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
   // Modal de agendamento de reunião (igual ao Prospecção/Receptivo)
   const [meetingModal, setMeetingModal] = useState(null); // {lead}
   const [meetingForm, setMeetingForm]   = useState({ meeting_at_date:"", meeting_at_time:"", responsible:"" });
+  // Visibilidade por usuário
+  const [verTodosPv, setVerTodosPv] = useState(false);
+  const [reatribuirLeadPv, setReatribuirLeadPv] = useState(null);
+  const [tenantUsersPv, setTenantUsersPv] = useState([]);
 
   const tenantId = currentUser?.tenant_id || "072b33d2-46ff-4bf2-839b-ee5d33fe6cb7";
+  const canManagePv = isManager(currentUser);
   const f = (k,v) => setForm(p=>({...p,[k]:v}));
+
+  const abrirReatribuicaoPv = async (lead) => {
+    setReatribuirLeadPv(lead);
+    if(tenantUsersPv.length===0){
+      const users = await getTenantUsers(tenantId).catch(()=>[]);
+      setTenantUsersPv(Array.isArray(users)?users:[]);
+    }
+  };
+
+  const reatribuirPv = async (lead, novoUsuario) => {
+    if(!lead||!novoUsuario) return;
+    try {
+      if(lead._source==="leads"){
+        await sbFetch("leads?id=eq."+lead.id+"&tenant_id=eq."+tenantId, "PATCH", {
+          responsible_id: novoUsuario.id,
+          responsible: novoUsuario.full_name||novoUsuario.name||novoUsuario.email,
+        });
+      } else {
+        await sbFetch("pos_venda?id=eq."+lead.id+"&tenant_id=eq."+tenantId, "PATCH", {
+          vendedor: novoUsuario.full_name||novoUsuario.name||novoUsuario.email,
+          responsible_id: novoUsuario.id,
+        });
+      }
+      setClientes(cs=>cs.map(c=>c.id===lead.id?{...c,
+        responsible_id:novoUsuario.id,
+        vendedor:novoUsuario.full_name||novoUsuario.name||novoUsuario.email,
+        responsible:novoUsuario.full_name||novoUsuario.name||novoUsuario.email,
+      }:c));
+      setReatribuirLeadPv(null);
+    } catch(e){ alert("Erro ao reatribuir: "+e.message); }
+  };
 
   // ── Loaders ──────────────────────────────────────────────────────────────────
   const loadClientes = async () => {
@@ -7418,8 +7608,11 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
     setError("");
   };
 
-  // ── Filtros — pos_venda usa status_envio ─────────────────────────────────────
-  const filtered = clientes.filter(c=>{
+  // ── Filtros — pos_venda usa status_envio + visibilidade por usuário ──────────
+  const clientesVisiveis = canManagePv && verTodosPv
+    ? clientes
+    : clientes.filter(c=>c.responsible_id===currentUser?.id || (!c.responsible_id && canManagePv));
+  const filtered = clientesVisiveis.filter(c=>{
     const matchFiltro = filtro==="todos" ? true : (c.status_envio||"Aguardando")===filtro;
     const matchBusca = !busca ||
       (c.nome||"").toLowerCase().includes(busca.toLowerCase()) ||
@@ -7467,7 +7660,14 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
           <div style={{fontSize:20,fontWeight:800,color:C.text}}>🤝 Pós-venda</div>
           <div style={{fontSize:12,color:C.muted,marginTop:2}}>Gestão de clientes e jornada de acionamento</div>
         </div>
-        <div style={{display:"flex",gap:8}}>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          {canManagePv&&(
+            <button onClick={()=>setVerTodosPv(v=>!v)}
+              style={{...btnG,padding:"9px 14px",fontSize:12,background:verTodosPv?(C.accent+"22"):"transparent",
+                border:"1px solid "+(verTodosPv?C.accent:C.border),color:verTodosPv?C.accent:C.muted,fontWeight:verTodosPv?700:400}}>
+              {verTodosPv?"👥 Ver todos":"👤 Só os meus"}
+            </button>
+          )}
           <button onClick={()=>setShowForm(true)} style={{...btnP,padding:"9px 18px",fontSize:13}}>+ Novo Cliente</button>
           <button onClick={loadClientes} style={{...btnG,padding:"8px 14px",fontSize:12}}>🔄 Atualizar</button>
         </div>
@@ -7603,7 +7803,17 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
                               onMouseEnter={e=>e.currentTarget.style.borderColor=color}
                               onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
                               <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:4}}>{c.nome_formatado||c.nome}</div>
-                              {(c.vendedor||c.responsible)&&<div style={{fontSize:9,color:C.faint,marginBottom:4}}>👤 {c.vendedor||c.responsible}</div>}
+                              {/* Responsável + reatribuir (manager em ver todos) */}
+                              {canManagePv&&verTodosPv
+                                ?<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+                                  <span style={{fontSize:9,color:C.accent}}>👤 {c.vendedor||c.responsible||"Sem responsável"}</span>
+                                  <button onClick={e=>{e.stopPropagation();abrirReatribuicaoPv(c);}}
+                                    style={{fontSize:9,padding:"2px 6px",borderRadius:4,border:"1px solid "+C.border,background:"transparent",color:C.muted,cursor:"pointer"}}>
+                                    Reatribuir
+                                  </button>
+                                </div>
+                                :(c.vendedor||c.responsible)&&<div style={{fontSize:9,color:C.faint,marginBottom:4}}>👤 {c.vendedor||c.responsible}</div>
+                              }
                               <div style={{fontSize:10,color:C.muted}}>{c.celular||c.whatsapp||"—"}</div>
                               {c.data_cadastro&&<div style={{fontSize:10,color:C.faint,marginTop:2}}>📋 {new Date(c.data_cadastro).toLocaleDateString("pt-BR")}</div>}
                               {/* Info da reunião quando status = Agendou reunião */}
@@ -7708,8 +7918,14 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
                           </div>
                         )}
                       </div>
-                      {/* Ação direita — retentar se erro, select se processado */}
-                      <div style={{display:"flex",alignItems:"center",padding:"0 12px",flexShrink:0}}>
+                      {/* Ação direita — retentar se erro, select se processado, reatribuir se manager */}
+                      <div style={{display:"flex",alignItems:"center",gap:6,padding:"0 12px",flexShrink:0}}>
+                        {canManagePv&&verTodosPv&&(
+                          <button onClick={e=>{e.stopPropagation();abrirReatribuicaoPv(c);}}
+                            style={{fontSize:9,padding:"3px 8px",borderRadius:4,border:"1px solid "+C.border,background:"transparent",color:C.muted,cursor:"pointer",whiteSpace:"nowrap"}}>
+                            Reatribuir
+                          </button>
+                        )}
                         {c._source==="agenda_erro"
                           ? <button onClick={e=>{e.stopPropagation();retentarAgenda(c);}}
                               style={{fontSize:10,padding:"5px 10px",fontWeight:700,background:"#EF444420",border:"1px solid #EF444460",borderRadius:8,color:"#EF4444",cursor:"pointer",whiteSpace:"nowrap"}}>
@@ -8060,6 +8276,33 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
                 {saving?"⟳ Salvando...":(lote.length>0?"💾 Salvar "+lote.length+" clientes":"💾 Salvar cliente")}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Reatribuir lead (PosVenda) ─────────────────────────────── */}
+      {reatribuirLeadPv&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+          onClick={()=>setReatribuirLeadPv(null)}>
+          <div style={{...card({padding:24}),width:340,maxWidth:"90vw"}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontSize:15,fontWeight:700,color:C.text,marginBottom:6}}>🔄 Reatribuir lead</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:16}}>{reatribuirLeadPv.nome||reatribuirLeadPv.name}</div>
+            <div style={{fontSize:11,color:C.faint,marginBottom:8}}>Responsável atual: {reatribuirLeadPv.vendedor||reatribuirLeadPv.responsible||"Sem responsável"}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:280,overflowY:"auto",marginBottom:16}}>
+              {tenantUsersPv.length===0
+                ?<div style={{color:C.faint,fontSize:12,padding:8}}>Carregando usuários...</div>
+                :tenantUsersPv.filter(u=>u.id!==reatribuirLeadPv.responsible_id).map(u=>(
+                  <button key={u.id} onClick={()=>reatribuirPv(reatribuirLeadPv,u)}
+                    style={{textAlign:"left",padding:"10px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.text,cursor:"pointer",fontSize:12}}
+                    onMouseEnter={e=>e.currentTarget.style.background=C.accent+"18"}
+                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <div style={{fontWeight:600}}>{u.full_name||u.name||u.email}</div>
+                    <div style={{fontSize:10,color:C.muted}}>{u.email}</div>
+                  </button>
+                ))
+              }
+            </div>
+            <button onClick={()=>setReatribuirLeadPv(null)} style={{...btnG,width:"100%"}}>Cancelar</button>
           </div>
         </div>
       )}
