@@ -762,7 +762,7 @@ function OnboardingWizard({ onComplete }) {
     setLoading(true); setError("");
     try {
       // 1. Create tenant
-      const tRes = await fetch("https://rbizynwybepmlljgcveq.supabase.co/rest/v1/tenants", {
+      const tRes = await fetch(SB_URL+"/rest/v1/tenants", {
         method: "POST",
         headers: {
           "apikey": SB_KEY, "Authorization": "Bearer "+SB_KEY,
@@ -784,7 +784,7 @@ function OnboardingWizard({ onComplete }) {
       setTenantId(tid);
 
       // 2. Create auth user
-      const aRes = await fetch("https://rbizynwybepmlljgcveq.supabase.co/auth/v1/admin/users", {
+      const aRes = await fetch(SB_URL+"/auth/v1/admin/users", {
         method: "POST",
         headers: {
           "apikey": SB_KEY, "Authorization": "Bearer "+SB_KEY,
@@ -797,7 +797,7 @@ function OnboardingWizard({ onComplete }) {
       const uid = aData.id;
 
       // 3. Create user profile
-      await fetch("https://rbizynwybepmlljgcveq.supabase.co/rest/v1/users", {
+      await fetch(SB_URL+"/rest/v1/users", {
         method: "POST",
         headers: {
           "apikey": SB_KEY, "Authorization": "Bearer "+SB_KEY,
@@ -808,7 +808,7 @@ function OnboardingWizard({ onComplete }) {
 
       // 4. Activate modules
       for(const mod of form.modules){
-        await fetch("https://rbizynwybepmlljgcveq.supabase.co/rest/v1/tenant_modules", {
+        await fetch(SB_URL+"/rest/v1/tenant_modules", {
           method: "POST",
           headers: {"apikey": SB_KEY, "Authorization": "Bearer "+SB_KEY, "Content-Type": "application/json"},
           body: JSON.stringify({tenant_id: tid, module_id: mod, active: true})
@@ -7328,7 +7328,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
   const [reatribuirLeadPv, setReatribuirLeadPv] = useState(null);
   const [tenantUsersPv, setTenantUsersPv] = useState([]);
 
-  const tenantId = currentUser?.tenant_id || "072b33d2-46ff-4bf2-839b-ee5d33fe6cb7";
+  const tenantId = currentUser?.tenant_id;
   const canManagePv = isManager(currentUser);
   const f = (k,v) => setForm(p=>({...p,[k]:v}));
 
@@ -7365,6 +7365,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
 
   // ── Loaders ──────────────────────────────────────────────────────────────────
   const loadClientes = async () => {
+    if(!tenantId) return;
     setLoading(true);
     try {
       // Tabela principal: clientes já na pos_venda
@@ -7459,7 +7460,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
     } finally { setLoading(false); }
   };
 
-  useEffect(()=>{ loadClientes(); },[]);
+  useEffect(()=>{ if(tenantId) loadClientes(); },[tenantId]);
 
   // ── Atualizar status ──────────────────────────────────────────────────────────
   const updateStatus = async (lead, novoStatus, extraFields={}) => {
