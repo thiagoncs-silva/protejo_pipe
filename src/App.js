@@ -4716,7 +4716,7 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
   const toggleCol = (key) => setExpandedCols(p=>({...p,[key]:!p[key]}));
   const tenantId = currentUser?.tenant_id || null;
   // Visibilidade por usuário
-  const [verTodosRec, setVerTodosRec] = useState(false);
+  const [verTodosRec, setVerTodosRec] = useState(()=>isManager(currentUser));
   const [reatribuirLeadRec, setReatribuirLeadRec] = useState(null);
   const [tenantUsersRec, setTenantUsersRec] = useState([]);
   const canManageRec = isManager(currentUser);
@@ -6528,7 +6528,7 @@ function Prospeccao({ currentUser, onAddToProsp }) {
   const [busca, setBusca]     = useState("");
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving]   = useState(false);
-  const [verTodos, setVerTodos] = useState(false); // manager: ver leads de todos
+  const [verTodos, setVerTodos] = useState(()=>isManager(currentUser)); // manager: ver leads de todos
   const [reatribuirLead, setReatribuirLead] = useState(null); // lead a reatribuir
   const [tenantUsers, setTenantUsers] = useState([]); // usuários para reatribuição
   const [form, setForm] = useState({
@@ -7324,7 +7324,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
   const [meetingModal, setMeetingModal] = useState(null); // {lead}
   const [meetingForm, setMeetingForm]   = useState({ meeting_at_date:"", meeting_at_time:"", responsible:"" });
   // Visibilidade por usuário
-  const [verTodosPv, setVerTodosPv] = useState(false);
+  const [verTodosPv, setVerTodosPv] = useState(()=>isManager(currentUser));
   const [reatribuirLeadPv, setReatribuirLeadPv] = useState(null);
   const [tenantUsersPv, setTenantUsersPv] = useState([]);
 
