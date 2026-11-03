@@ -690,7 +690,7 @@ const sbAuth = {
 
   // Lista usuários de um tenant
   getTenantUsers: async (tenantId) => {
-    return await sbFetch(`users?tenant_id=eq.${tenantId}&select=id,name,full_name,email,role,status,created_at&order=created_at.asc`);
+    return await sbFetch(`users?tenant_id=eq.${tenantId}&select=id,name,email,role,status,created_at&order=created_at.asc`);
   },
 
   // Atualiza usuário
