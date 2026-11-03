@@ -7389,29 +7389,10 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
         return map[s] || s || "Aguardando";
       };
 
-      // Fonte principal: tabela leads com module=pos_venda (igual à Prospecção)
-      const leadsRows = await sbFetch("leads?select=*&tenant_id=eq."+tenantId+"&module=eq.pos_venda&order=created_at.desc");
-      // Legado: tabela pos_venda (clientes processados pela IA antes da migração)
+      // Tabela pos_venda (registros processados pela IA)
       const rows = await sbFetch("pos_venda?select=*&tenant_id=eq."+tenantId+"&order=data_cadastro.desc");
       // Agenda: todos os status (pendente, erro, processado)
       const agenda = await sbFetch("pos_venda_agenda?select=*&tenant_id=eq."+tenantId+"&order=data_agendamento.asc");
-
-      // Normaliza lead da tabela leads para o formato interno do PosVenda
-      const normalizaLead = (l) => ({
-        ...l,
-        _source: "leads",
-        nome: l.name||l.nome||"",
-        celular: l.phone||l.celular||"",
-        whatsapp: l.phone||l.celular||"",
-        nome_formatado: (l.name||l.nome||"")
-          ? (l.name||l.nome).split(" ")[0].charAt(0).toUpperCase()+(l.name||l.nome).split(" ")[0].slice(1).toLowerCase()
-          : "",
-        status_envio: normalizaPvStatus(l.status)||"Aguardando",
-        data_cadastro: l.created_at,
-        vendedor: l.responsible||null,
-        responsible_id: l.responsible_id||null,
-        data_agendamento: l.meeting_at||null,
-      });
 
       // Mapeamento:
       //   pendente   → "Aguardando"  (ainda não chegou a hora)
@@ -7446,23 +7427,17 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
         nome_formatado: r.nome
           ? r.nome.split(" ")[0].charAt(0).toUpperCase()+r.nome.split(" ")[0].slice(1).toLowerCase()
           : r.nome,
-        // garante alias de telefone
         celular: r.celular||r.whatsapp||r.telefone||"",
-        // garante responsible_id explicitamente nulo se não existir
         responsible_id: r.responsible_id||null,
       }));
-      const leadsNorm = (Array.isArray(leadsRows)?leadsRows:[]).map(normalizaLead);
-      // Deduplicar: leads têm prioridade > pos_venda > agenda
-      // Remove da agenda qualquer registro cujo telefone já aparece em leads ou pos_venda
-      const leadsPhones = new Set(leadsNorm.map(l=>l.celular||"").filter(Boolean));
-      const pvRowsFiltrado = pvRows.filter(r=>!leadsPhones.has(r.celular||""));
-      const pvPhones = new Set(pvRowsFiltrado.map(r=>r.celular||"").filter(Boolean));
+      // Deduplicar agenda: remove telefones que já existem em pos_venda
+      const pvPhones = new Set(pvRows.map(r=>r.celular||"").filter(Boolean));
       const agendaFiltrada = agendaRows.filter(a=>{
         const tel = a.celular||a.whatsapp||"";
-        return !leadsPhones.has(tel) && !pvPhones.has(tel);
+        return !pvPhones.has(tel);
       });
-      setClientes([...leadsNorm, ...pvRowsFiltrado, ...agendaFiltrada]);
-      console.log("[PosVenda] leads:", leadsNorm.length, "agenda:", agendaRows.length, "pos_venda legacy:", pvRowsFiltrado.length);
+      setClientes([...pvRows, ...agendaFiltrada]);
+      console.log("[PosVenda] pos_venda:", pvRows.length, "agenda:", agendaFiltrada.length);
       setLeadStages([]);
       setError("");
     } catch(e) {
@@ -7638,7 +7613,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
 
   const agendados   = clientes.filter(c=>c._source==="agenda_pendente").length;
   const comErro     = clientes.filter(c=>c._source==="agenda_erro").length;
-  const processados = clientes.filter(c=>!c._source);
+  const processados = clientes.filter(c=>c._source==="pos_venda");
   const total       = processados.length; // só registros reais da pos_venda
   const enviados    = processados.filter(c=>c.status_envio&&c.status_envio!=="Aguardando").length;
   const responderam = processados.filter(c=>["Respondeu","Agendou reunião"].includes(c.status_envio||"")).length;
@@ -7796,7 +7771,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
               <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8}}>
                 {PV_STATUS_EDITAVEIS.map(status=>{
                   const {color,icon} = pvMeta(status);
-                  const stageLeads = filtered.filter(c=>!c._source&&c.status_envio===status);
+                  const stageLeads = filtered.filter(c=>c._source==="pos_venda"&&c.status_envio===status);
                   const colKey = "pv_"+status;
                   const expanded = !!expandedCols[colKey];
                   return (
