@@ -6774,6 +6774,14 @@ function Prospeccao({ currentUser, onAddToProsp }) {
 
       {error&&<div style={{...card({padding:12}),color:"#F87171",fontSize:12,marginBottom:16}}>{error}</div>}
 
+      {/* Banner ver todos — Prospecção */}
+      {canManage&&verTodos&&(
+        <div style={{marginBottom:14,padding:"10px 16px",background:"#F59E0B18",border:"1px solid #F59E0B44",borderRadius:8,display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:14}}>👥</span>
+          <span style={{fontSize:12,color:"#F59E0B",fontWeight:600}}>Modo administrador ativo — você está vendo os leads de <strong>todos os usuários</strong></span>
+        </div>
+      )}
+
       {/* KPIs */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:20}}>
         {PROSP_STAGES.map(s=>(
@@ -6793,14 +6801,6 @@ function Prospeccao({ currentUser, onAddToProsp }) {
           </button>
         ))}
       </div>
-
-      {/* Banner ver todos — Prospecção */}
-      {canManage&&verTodos&&(
-        <div style={{marginBottom:14,padding:"10px 16px",background:"#F59E0B18",border:"1px solid #F59E0B44",borderRadius:8,display:"flex",alignItems:"center",gap:8}}>
-          <span style={{fontSize:14}}>👥</span>
-          <span style={{fontSize:12,color:"#F59E0B",fontWeight:600}}>Modo administrador ativo — você está vendo os leads de <strong>todos os usuários</strong></span>
-        </div>
-      )}
 
       {loading&&<div style={{textAlign:"center",padding:40,color:C.muted}}>Carregando...</div>}
 
@@ -7633,9 +7633,9 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
     return matchFiltro && matchBusca;
   });
 
-  const agendados   = clientes.filter(c=>c._source==="agenda_pendente").length;
-  const comErro     = clientes.filter(c=>c._source==="agenda_erro").length;
-  const processados = clientes.filter(c=>c._source==="pos_venda");
+  const agendados   = clientesVisiveis.filter(c=>c._source==="agenda_pendente").length;
+  const comErro     = clientesVisiveis.filter(c=>c._source==="agenda_erro").length;
+  const processados = clientesVisiveis.filter(c=>c._source==="pos_venda");
   const total       = processados.length; // só registros reais da pos_venda
   const enviados    = processados.filter(c=>c.status_envio&&c.status_envio!=="Aguardando").length;
   const responderam = processados.filter(c=>["Respondeu","Agendou reunião"].includes(c.status_envio||"")).length;
