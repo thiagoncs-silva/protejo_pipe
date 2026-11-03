@@ -4744,8 +4744,8 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
   // Filter only receptivo leads + visibility
   const allRecLeads = leads.filter(l=>l.module==="receptivo");
   const recLeads = canManageRec && verTodosRec
-    ? allRecLeads
-    : allRecLeads.filter(l=>l.responsible_id===currentUser?.id || (!l.responsible_id && canManageRec));
+    ? allRecLeads // ver todos (inclui sem responsável)
+    : allRecLeads.filter(l=>l.responsible_id===currentUser?.id); // só os meus
 
   // Stats
   const hoje = recLeads.filter(l=>{
@@ -6688,9 +6688,8 @@ function Prospeccao({ currentUser, onAddToProsp }) {
   const canManage = isManager(currentUser);
   // Filtro de visibilidade: user vê só os seus; manager em modo "ver todos" vê todos
   const leadsVisiveis = canManage && verTodos
-    ? leads // manager vendo todos
-    : leads.filter(l=>l.responsible_id===currentUser?.id || (!l.responsible_id && canManage));
-  // sem responsible_id só aparece para manager (no ver todos)
+    ? leads // manager vendo todos (inclui sem responsável)
+    : leads.filter(l=>l.responsible_id===currentUser?.id); // só os meus (exclui sem responsável)
   const visLeads = leadsVisiveis.filter(l=>!busca||l.name?.toLowerCase().includes(busca.toLowerCase())||l.company?.toLowerCase().includes(busca.toLowerCase()));
 
   // Reatribuição: atualiza responsible_id + responsible no banco
@@ -7610,8 +7609,8 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
 
   // ── Filtros — pos_venda usa status_envio + visibilidade por usuário ──────────
   const clientesVisiveis = canManagePv && verTodosPv
-    ? clientes
-    : clientes.filter(c=>c.responsible_id===currentUser?.id || (!c.responsible_id && canManagePv));
+    ? clientes // ver todos (inclui sem responsável)
+    : clientes.filter(c=>c.responsible_id===currentUser?.id); // só os meus
   const filtered = clientesVisiveis.filter(c=>{
     const matchFiltro = filtro==="todos" ? true : (c.status_envio||"Aguardando")===filtro;
     const matchBusca = !busca ||
