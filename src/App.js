@@ -1,4 +1,4 @@
-/* eslint-disable*/
+/* eslint-disable */
 import React, { useState, useEffect, useRef } from "react";
 
 // ─── SUPABASE CONFIG ──────────────────────────────────────────────────────────
@@ -6454,33 +6454,6 @@ function Reativacao({ leads, onUpdateLead, onSetPage }) {
       )}
 
       {/* Modal — Agendou Reunião */}
-      {/* Modal: Reatribuir lead (Receptivo) */}
-      {reatribuirLeadRec&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
-          onClick={()=>setReatribuirLeadRec(null)}>
-          <div style={{...card({padding:24}),width:340,maxWidth:"90vw"}} onClick={e=>e.stopPropagation()}>
-            <div style={{fontSize:15,fontWeight:700,color:C.text,marginBottom:6}}>🔄 Reatribuir lead</div>
-            <div style={{fontSize:12,color:C.muted,marginBottom:16}}>{reatribuirLeadRec.name}</div>
-            <div style={{fontSize:11,color:C.faint,marginBottom:8}}>Responsável atual: {reatribuirLeadRec.responsible||"Sem responsável"}</div>
-            <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:280,overflowY:"auto",marginBottom:16}}>
-              {tenantUsersRec.length===0
-                ?<div style={{color:C.faint,fontSize:12,padding:8}}>Carregando usuários...</div>
-                :tenantUsersRec.filter(u=>u.id!==reatribuirLeadRec.responsible_id).map(u=>(
-                  <button key={u.id} onClick={()=>reatribuirRec(reatribuirLeadRec,u)}
-                    style={{textAlign:"left",padding:"10px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.text,cursor:"pointer",fontSize:12}}
-                    onMouseEnter={e=>e.currentTarget.style.background=C.accent+"18"}
-                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                    <div style={{fontWeight:600}}>{u.full_name||u.name||u.email}</div>
-                    <div style={{fontSize:10,color:C.muted}}>{u.email}</div>
-                  </button>
-                ))
-              }
-            </div>
-            <button onClick={()=>setReatribuirLeadRec(null)} style={{...btnG,width:"100%"}}>Cancelar</button>
-          </div>
-        </div>
-      )}
-
       {meetingModal&&(
         <div style={{position:"fixed",inset:0,zIndex:600,background:"rgba(6,14,28,0.85)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
           onClick={()=>setMeetingModal(null)}>
@@ -6510,6 +6483,33 @@ function Reativacao({ leads, onUpdateLead, onSetPage }) {
               <button onClick={()=>setMeetingModal(null)} style={{...btnG,flex:1}}>Cancelar</button>
               <button onClick={confirmMeeting} style={{...btnP,flex:1,background:"linear-gradient(135deg,#10B981,#059669)"}}>✅ Confirmar</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Reatribuir lead (Receptivo) */}
+      {reatribuirLeadRec&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+          onClick={()=>setReatribuirLeadRec(null)}>
+          <div style={{...card({padding:24}),width:340,maxWidth:"90vw"}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontSize:15,fontWeight:700,color:C.text,marginBottom:6}}>🔄 Reatribuir lead</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:16}}>{reatribuirLeadRec.name}</div>
+            <div style={{fontSize:11,color:C.faint,marginBottom:8}}>Responsável atual: {reatribuirLeadRec.responsible||"Sem responsável"}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:280,overflowY:"auto",marginBottom:16}}>
+              {tenantUsersRec.length===0
+                ?<div style={{color:C.faint,fontSize:12,padding:8}}>Carregando usuários...</div>
+                :tenantUsersRec.filter(u=>u.id!==reatribuirLeadRec.responsible_id).map(u=>(
+                  <button key={u.id} onClick={()=>reatribuirRec(reatribuirLeadRec,u)}
+                    style={{textAlign:"left",padding:"10px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.text,cursor:"pointer",fontSize:12}}
+                    onMouseEnter={e=>e.currentTarget.style.background=C.accent+"18"}
+                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <div style={{fontWeight:600}}>{u.full_name||u.name||u.email}</div>
+                    <div style={{fontSize:10,color:C.muted}}>{u.email}</div>
+                  </button>
+                ))
+              }
+            </div>
+            <button onClick={()=>setReatribuirLeadRec(null)} style={{...btnG,width:"100%"}}>Cancelar</button>
           </div>
         </div>
       )}
@@ -7384,7 +7384,6 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
       } else {
         await sbFetch("pos_venda?id=eq."+lead.id+"&tenant_id=eq."+tenantId, "PATCH", {
           vendedor: novoUsuario.full_name||novoUsuario.name||novoUsuario.email,
-          responsible_id: novoUsuario.id,
         });
       }
       setClientes(cs=>cs.map(c=>c.id===lead.id?{...c,
