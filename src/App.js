@@ -6891,6 +6891,12 @@ function Prospeccao({ currentUser, onAddToProsp }) {
                   <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
                     <span style={{fontSize:9,color:stage.color,background:stage.color+"18",padding:"2px 8px",borderRadius:20,fontWeight:700}}>{stage.icon} {stage.name}</span>
                     <span style={{fontSize:9,color:chColor,background:chColor+"18",padding:"2px 8px",borderRadius:20,fontWeight:700}}>{l.channel||"whatsapp"}</span>
+                    {canManage&&verTodos&&(
+                      <button onClick={e=>{e.stopPropagation();abrirReatribuicao(l);}}
+                        style={{fontSize:9,padding:"3px 8px",borderRadius:4,border:"1px solid "+C.border,background:"transparent",color:C.muted,cursor:"pointer",whiteSpace:"nowrap"}}>
+                        Reatribuir
+                      </button>
+                    )}
                   </div>
                 </div>
               );
