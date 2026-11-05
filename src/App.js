@@ -4720,6 +4720,9 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
   const [reatribuirLeadRec, setReatribuirLeadRec] = useState(null);
   const [tenantUsersRec, setTenantUsersRec] = useState([]);
   const canManageRec = isManager(currentUser);
+  // Busca
+  const [buscaRec, setBuscaRec] = useState("");
+  const [buscaTipoRec, setBuscaTipoRec] = useState("nome"); // nome | tel | cpf
 
   const abrirReatribuicaoRec = async (lead) => {
     setReatribuirLeadRec(lead);
@@ -4743,9 +4746,17 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
 
   // Filter only receptivo leads + visibility
   const allRecLeads = leads.filter(l=>l.module==="receptivo");
-  const recLeads = canManageRec && verTodosRec
+  const recLeadsVisiveis = canManageRec && verTodosRec
     ? allRecLeads // ver todos (inclui sem responsável)
     : allRecLeads.filter(l=>l.responsible_id===currentUser?.id); // só os meus
+  const recLeads = recLeadsVisiveis.filter(l=>{
+    if(!buscaRec) return true;
+    const q = buscaRec.toLowerCase();
+    if(buscaTipoRec==="nome") return (l.name||"").toLowerCase().includes(q);
+    if(buscaTipoRec==="tel")  return (l.phone||"").replace(/\D/g,"").includes(buscaRec.replace(/\D/g,""));
+    if(buscaTipoRec==="cpf")  return (l.cpf||l.cpf_cnpj||"").replace(/\D/g,"").includes(buscaRec.replace(/\D/g,""));
+    return true;
+  });
 
   // Stats
   const hoje = recLeads.filter(l=>{
@@ -4921,7 +4932,7 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
       )}
 
       {/* Tabs */}
-      <div style={{display:"flex",gap:0,marginBottom:20,border:"1px solid "+C.border,borderRadius:10,overflow:"hidden"}}>
+      <div style={{display:"flex",gap:0,marginBottom:12,border:"1px solid "+C.border,borderRadius:10,overflow:"hidden"}}>
         {[["kanban","📋 Kanban"],["lista","📄 Lista"],["canais","📊 Por Canal"]].map(([v,l])=>(
           <button key={v} onClick={()=>setTab(v)}
             style={{flex:1,padding:"10px",border:"none",background:tab===v?C.accent:"transparent",color:tab===v?"#fff":C.muted,fontWeight:tab===v?700:400,fontSize:12,cursor:"pointer",transition:"all 0.15s"}}>
@@ -4930,15 +4941,43 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
         ))}
       </div>
 
+      {/* Busca */}
+      {(tab==="kanban"||tab==="lista")&&(
+        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:16}}>
+          <div style={{display:"flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden",flexShrink:0}}>
+            {[["nome","Nome"],["tel","Tel"],["cpf","CPF"]].map(([v,l])=>(
+              <button key={v} onClick={()=>setBuscaTipoRec(v)}
+                style={{padding:"6px 10px",border:"none",fontSize:11,fontWeight:600,cursor:"pointer",
+                  background:buscaTipoRec===v?C.accent:"transparent",
+                  color:buscaTipoRec===v?"#fff":C.muted,transition:"all 0.15s"}}>
+                {l}
+              </button>
+            ))}
+          </div>
+          <div style={{flex:1,position:"relative"}}>
+            <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontSize:12,color:C.muted,pointerEvents:"none"}}>🔍</span>
+            <input value={buscaRec} onChange={e=>setBuscaRec(e.target.value)}
+              placeholder={buscaTipoRec==="nome"?"Buscar por nome...":buscaTipoRec==="tel"?"Buscar por telefone...":"Buscar por CPF..."}
+              style={{width:"100%",padding:"7px 32px 7px 32px",borderRadius:8,border:"1px solid "+C.border,
+                background:C.panel,color:C.text,fontSize:12,outline:"none"}}
+              onFocus={e=>e.target.style.borderColor=C.accent}
+              onBlur={e=>e.target.style.borderColor=C.border}/>
+            {buscaRec&&<button onClick={()=>setBuscaRec("")}
+              style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,lineHeight:1}}>✕</button>}
+          </div>
+          {buscaRec&&<span style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",flexShrink:0}}>{recLeads.length} encontrado{recLeads.length!==1?"s":""}</span>}
+        </div>
+      )}
+
       {/* Kanban */}
       {tab==="kanban"&&(
-        <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8}}>
+        <div style={{display:"flex",gap:12,overflowX:"auto",overflowY:"hidden",paddingBottom:12,minHeight:120,alignItems:"start"}}>
           {RECEPTIVO_STAGES.filter(s=>s.id!=="r6").map(stage=>{
             const stageLeads = recLeads.filter(l=>l.status===stage.name||l.funilStage===stage.id);
             const colKey = "rec_"+stage.id;
             const expanded = !!expandedCols[colKey];
             return (
-              <div key={stage.id} style={{minWidth:220,flex:"0 0 220px"}}>
+              <div key={stage.id} style={{minWidth:220,flex:"0 0 220px",maxHeight:"calc(100vh - 300px)",overflowY:"auto",paddingRight:4}}>
                 {/* Header clicável — sempre visível */}
                 <div onClick={()=>toggleCol(colKey)}
                   style={{display:"flex",alignItems:"center",gap:6,marginBottom:expanded?10:0,padding:"8px 12px",background:stage.color+"18",borderRadius:8,border:"1px solid "+stage.color+"33",cursor:"pointer",userSelect:"none"}}>
@@ -6339,11 +6378,11 @@ function Reativacao({ leads, onUpdateLead, onSetPage }) {
 
       {/* ── KANBAN ── */}
       {tab==="kanban"&&(
-        <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8}}>
+        <div style={{display:"flex",gap:12,overflowX:"auto",overflowY:"hidden",paddingBottom:12,minHeight:120,alignItems:"start"}}>
           {REAT_STAGES.map(stage=>{
             const stageLeads = inativos.filter(l=>getReatStage(l).id===stage.id);
             return (
-              <div key={stage.id} style={{minWidth:220,flex:"0 0 220px"}}>
+              <div key={stage.id} style={{minWidth:220,flex:"0 0 220px",maxHeight:"calc(100vh - 300px)",overflowY:"auto",paddingRight:4}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,padding:"8px 12px",background:stage.color+"18",borderRadius:8,border:"1px solid "+stage.color+"33"}}>
                   <span>{stage.icon}</span>
                   <span style={{fontSize:12,fontWeight:700,color:stage.color}}>{stage.name}</span>
@@ -6537,6 +6576,7 @@ function Prospeccao({ currentUser, onAddToProsp }) {
   const [error, setError]     = useState("");
   const [sel, setSel]         = useState(null);
   const [busca, setBusca]     = useState("");
+  const [buscaTipo, setBuscaTipo] = useState("nome"); // nome | tel | cpf
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving]   = useState(false);
   const [verTodos, setVerTodos] = useState(false); // manager: ver leads de todos
@@ -6702,7 +6742,14 @@ function Prospeccao({ currentUser, onAddToProsp }) {
   const leadsVisiveis = canManage && verTodos
     ? leads // manager vendo todos (inclui sem responsável)
     : leads.filter(l=>l.responsible_id===currentUser?.id); // só os meus (exclui sem responsável)
-  const visLeads = leadsVisiveis.filter(l=>!busca||l.name?.toLowerCase().includes(busca.toLowerCase())||l.company?.toLowerCase().includes(busca.toLowerCase()));
+  const visLeads = leadsVisiveis.filter(l=>{
+    if(!busca) return true;
+    const q = busca.toLowerCase();
+    if(buscaTipo==="nome") return (l.name||"").toLowerCase().includes(q)||(l.company||"").toLowerCase().includes(q);
+    if(buscaTipo==="tel")  return (l.phone||"").replace(/\D/g,"").includes(busca.replace(/\D/g,""));
+    if(buscaTipo==="cpf")  return (l.cpf||l.cpf_cnpj||"").replace(/\D/g,"").includes(busca.replace(/\D/g,""));
+    return true;
+  });
 
   // Reatribuição: atualiza responsible_id + responsible no banco
   const reatribuir = async (lead, novoUsuario) => {
@@ -6804,15 +6851,43 @@ function Prospeccao({ currentUser, onAddToProsp }) {
 
       {loading&&<div style={{textAlign:"center",padding:40,color:C.muted}}>Carregando...</div>}
 
+      {/* Busca — Prospecção */}
+      {!loading&&(tab==="kanban"||tab==="lista")&&(
+        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:16}}>
+          <div style={{display:"flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden",flexShrink:0}}>
+            {[["nome","Nome"],["tel","Tel"],["cpf","CPF"]].map(([v,l])=>(
+              <button key={v} onClick={()=>setBuscaTipo(v)}
+                style={{padding:"6px 10px",border:"none",fontSize:11,fontWeight:600,cursor:"pointer",
+                  background:buscaTipo===v?C.accent:"transparent",
+                  color:buscaTipo===v?"#fff":C.muted,transition:"all 0.15s"}}>
+                {l}
+              </button>
+            ))}
+          </div>
+          <div style={{flex:1,position:"relative"}}>
+            <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontSize:12,color:C.muted,pointerEvents:"none"}}>🔍</span>
+            <input value={busca} onChange={e=>setBusca(e.target.value)}
+              placeholder={buscaTipo==="nome"?"Buscar por nome...":buscaTipo==="tel"?"Buscar por telefone...":"Buscar por CPF..."}
+              style={{width:"100%",padding:"7px 32px 7px 32px",borderRadius:8,border:"1px solid "+C.border,
+                background:C.panel,color:C.text,fontSize:12,outline:"none"}}
+              onFocus={e=>e.target.style.borderColor=C.accent}
+              onBlur={e=>e.target.style.borderColor=C.border}/>
+            {busca&&<button onClick={()=>setBusca("")}
+              style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,lineHeight:1}}>✕</button>}
+          </div>
+          {busca&&<span style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",flexShrink:0}}>{visLeads.length} encontrado{visLeads.length!==1?"s":""}</span>}
+        </div>
+      )}
+
       {/* ── KANBAN ── */}
       {!loading&&tab==="kanban"&&(
-        <div style={{display:"flex",gap:10,overflowX:"auto",paddingBottom:8,alignItems:"start"}}>
+        <div style={{display:"flex",gap:10,overflowX:"auto",overflowY:"hidden",paddingBottom:12,minHeight:120,alignItems:"start"}}>
           {PROSP_STAGES.map(stage=>{
             const cols = visLeads.filter(l=>getStageId(l)===stage.id);
             const colKey = "prosp_"+stage.id;
             const expanded = !!expandedCols[colKey];
             return (
-              <div key={stage.id} style={{minWidth:180,flex:"0 0 180px"}}>
+              <div key={stage.id} style={{minWidth:180,flex:"0 0 180px",maxHeight:"calc(100vh - 300px)",overflowY:"auto",paddingRight:4}}>
                 {/* Header clicável — sempre visível */}
                 <div onClick={()=>toggleCol(colKey)}
                   style={{display:"flex",alignItems:"center",gap:5,marginBottom:expanded?8:0,padding:"7px 9px",background:stage.color+"14",border:"1px solid "+stage.color+"30",borderRadius:8,cursor:"pointer",userSelect:"none"}}>
@@ -7336,6 +7411,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
   const [sel,      setSel]      = useState(null);
   const [filtro,   setFiltro]   = useState("todos");
   const [busca,    setBusca]    = useState("");
+  const [buscaTipoPv, setBuscaTipoPv] = useState("nome"); // nome | tel | cpf
   // Colunas expandidas no kanban — por padrão todas fechadas
   const initPvCols = () => {
     const agCols = ["ag_agenda_pendente","ag_agenda_erro","ag_agenda_processado"].reduce((acc,k)=>({...acc,[k]:true}),{});
@@ -7631,10 +7707,12 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
     : clientes.filter(c=>c.responsible_id===currentUser?.id); // só os meus
   const filtered = clientesVisiveis.filter(c=>{
     const matchFiltro = filtro==="todos" ? true : (c.status_envio||"Aguardando")===filtro;
-    const matchBusca = !busca ||
-      (c.nome||"").toLowerCase().includes(busca.toLowerCase()) ||
-      (c.celular||"").includes(busca) ||
-      (c.cpf_cnpj||"").includes(busca);
+    const matchBusca = !busca || (()=>{
+      if(buscaTipoPv==="nome") return (c.nome||c.nome_formatado||"").toLowerCase().includes(busca.toLowerCase());
+      if(buscaTipoPv==="tel")  return (c.celular||"").replace(/\D/g,"").includes(busca.replace(/\D/g,""));
+      if(buscaTipoPv==="cpf")  return (c.cpf_cnpj||"").replace(/\D/g,"").includes(busca.replace(/\D/g,""));
+      return true;
+    })();
     return matchFiltro && matchBusca;
   });
 
@@ -7724,6 +7802,34 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
         ))}
       </div>
 
+      {/* Busca — Pós-venda */}
+      {(tab==="kanban"||tab==="lista")&&(
+        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:16}}>
+          <div style={{display:"flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden",flexShrink:0}}>
+            {[["nome","Nome"],["tel","Tel"],["cpf","CPF"]].map(([v,l])=>(
+              <button key={v} onClick={()=>setBuscaTipoPv(v)}
+                style={{padding:"6px 10px",border:"none",fontSize:11,fontWeight:600,cursor:"pointer",
+                  background:buscaTipoPv===v?C.accent:"transparent",
+                  color:buscaTipoPv===v?"#fff":C.muted,transition:"all 0.15s"}}>
+                {l}
+              </button>
+            ))}
+          </div>
+          <div style={{flex:1,position:"relative"}}>
+            <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontSize:12,color:C.muted,pointerEvents:"none"}}>🔍</span>
+            <input value={busca} onChange={e=>setBusca(e.target.value)}
+              placeholder={buscaTipoPv==="nome"?"Buscar por nome...":buscaTipoPv==="tel"?"Buscar por telefone...":"Buscar por CPF..."}
+              style={{width:"100%",padding:"7px 32px 7px 32px",borderRadius:8,border:"1px solid "+C.border,
+                background:C.panel,color:C.text,fontSize:12,outline:"none"}}
+              onFocus={e=>e.target.style.borderColor=C.accent}
+              onBlur={e=>e.target.style.borderColor=C.border}/>
+            {busca&&<button onClick={()=>setBusca("")}
+              style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,lineHeight:1}}>✕</button>}
+          </div>
+          {busca&&<span style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",flexShrink:0}}>{filtered.length} encontrado{filtered.length!==1?"s":""}</span>}
+        </div>
+      )}
+
       {/* ── ABA KANBAN ── */}
       {tab==="kanban"&&(
         loading
@@ -7741,7 +7847,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
                 </div>
                 <div style={{flex:1,height:1,background:C.border}}/>
               </div>
-              <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8}}>
+              <div style={{display:"flex",gap:12,overflowX:"auto",overflowY:"hidden",paddingBottom:12,minHeight:120,alignItems:"start"}}>
                 {[
                   {status:"Aguardando", source:"agenda_pendente",  color:"#6B7280", icon:"⏳"},
                   {status:"Erro",       source:"agenda_erro",      color:"#EF4444", icon:"⚠️"},
@@ -7751,7 +7857,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
                   const colKey = "ag_"+source;
                   const expanded = !!expandedCols[colKey];
                   return (
-                    <div key={status} style={{minWidth:220,flex:"0 0 220px"}}>
+                    <div key={status} style={{minWidth:220,flex:"0 0 220px",maxHeight:"calc(100vh - 300px)",overflowY:"auto",paddingRight:4}}>
                       {/* Header clicável — sempre visível */}
                       <div onClick={()=>toggleCol(colKey)}
                         style={{display:"flex",alignItems:"center",gap:6,marginBottom:expanded?10:0,padding:"8px 12px",background:color+"18",borderRadius:expanded?8:"8px",border:"1px solid "+color+"33",cursor:"pointer",userSelect:"none"}}>
@@ -7808,14 +7914,14 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
                 </div>
                 <div style={{flex:1,height:1,background:C.border}}/>
               </div>
-              <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8}}>
+              <div style={{display:"flex",gap:12,overflowX:"auto",overflowY:"hidden",paddingBottom:12,minHeight:120,alignItems:"start"}}>
                 {PV_STATUS_EDITAVEIS.map(status=>{
                   const {color,icon} = pvMeta(status);
                   const stageLeads = filtered.filter(c=>c._source==="pos_venda"&&c.status_envio===status);
                   const colKey = "pv_"+status;
                   const expanded = !!expandedCols[colKey];
                   return (
-                    <div key={status} style={{minWidth:220,flex:"0 0 220px"}}>
+                    <div key={status} style={{minWidth:220,flex:"0 0 220px",maxHeight:"calc(100vh - 300px)",overflowY:"auto",paddingRight:4}}>
                       {/* Header clicável — sempre visível */}
                       <div onClick={()=>toggleCol(colKey)}
                         style={{display:"flex",alignItems:"center",gap:6,marginBottom:expanded?10:0,padding:"8px 12px",background:color+"18",borderRadius:8,border:"1px solid "+color+"33",cursor:"pointer",userSelect:"none"}}>
