@@ -9006,9 +9006,18 @@ export default function App() {
         }
         // pos_venda excluído — tem tabela própria (pos_venda) carregada no Dashboard
         const rows = await sbFetch("leads?tenant_id=eq."+user?.tenant_id+"&module=neq.pos_venda&select=*&order=created_at.desc");
-        if(rows && rows.length > 0){
-          rows.forEach(r=>{ setLeadStage(r.id, r.funil_stage||firstStage); });
-          setLeads(rows.map(dbToLead));
+        // Managers também buscam leads com tenant_id IS NULL (cadastros com bug de tenant)
+        let rowsNull = [];
+        if(isManager(user)){
+          try {
+            rowsNull = await sbFetch("leads?tenant_id=is.null&module=neq.pos_venda&select=*&order=created_at.desc");
+            if(!Array.isArray(rowsNull)) rowsNull = [];
+          } catch(e){ rowsNull = []; }
+        }
+        const allRows = [...(Array.isArray(rows)?rows:[]), ...rowsNull];
+        if(allRows.length > 0){
+          allRows.forEach(r=>{ setLeadStage(r.id, r.funil_stage||firstStage); });
+          setLeads(allRows.map(dbToLead));
         } else {
           // Tenant autenticado sem leads — começa com lista vazia (sem mock)
           setLeads([]);
