@@ -4748,7 +4748,10 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
   const allRecLeads = leads.filter(l=>l.module==="receptivo");
   const recLeadsVisiveis = canManageRec && verTodosRec
     ? allRecLeads // ver todos (inclui sem responsável)
-    : allRecLeads.filter(l=>l.responsible_id===currentUser?.id); // só os meus
+    : allRecLeads.filter(l=>
+        l.responsible_id===currentUser?.id ||
+        (l.responsible&&currentUser?.name&&l.responsible.toLowerCase()===currentUser.name.toLowerCase())
+      ); // só os meus
   const recLeads = recLeadsVisiveis.filter(l=>{
     if(!buscaRec) return true;
     const q = buscaRec.toLowerCase();
@@ -6741,7 +6744,10 @@ function Prospeccao({ currentUser, onAddToProsp }) {
   // Filtro de visibilidade: user vê só os seus; manager em modo "ver todos" vê todos
   const leadsVisiveis = canManage && verTodos
     ? leads // manager vendo todos (inclui sem responsável)
-    : leads.filter(l=>l.responsible_id===currentUser?.id); // só os meus (exclui sem responsável)
+    : leads.filter(l=>
+        l.responsible_id===currentUser?.id ||
+        (l.responsible&&currentUser?.name&&l.responsible.toLowerCase()===currentUser.name.toLowerCase())
+      ); // só os meus (exclui sem responsável)
   const visLeads = leadsVisiveis.filter(l=>{
     if(!busca) return true;
     const q = busca.toLowerCase();
@@ -7702,9 +7708,13 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
   };
 
   // ── Filtros — pos_venda usa status_envio + visibilidade por usuário ──────────
+  // Filtra por responsible_id (uuid) OU por vendedor (nome) para compatibilidade com FK de auth.users
   const clientesVisiveis = canManagePv && verTodosPv
     ? clientes // ver todos (inclui sem responsável)
-    : clientes.filter(c=>c.responsible_id===currentUser?.id); // só os meus
+    : clientes.filter(c=>
+        c.responsible_id===currentUser?.id ||
+        (c.vendedor&&currentUser?.name&&c.vendedor.toLowerCase()===currentUser.name.toLowerCase())
+      ); // só os meus
   const filtered = clientesVisiveis.filter(c=>{
     const matchFiltro = filtro==="todos" ? true : (c.status_envio||"Aguardando")===filtro;
     const matchBusca = !busca || (()=>{
