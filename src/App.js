@@ -4795,6 +4795,7 @@ function Receptivo({ leads, onAddLead, onUpdateLead, currentUser }) {
       createdAt: new Date().toISOString(),
       responsible: currentUser?.name||currentUser?.full_name||currentUser?.email||null,
       responsible_id: currentUser?.id||null,
+      tenant_id: currentUser?.tenant_id||null,
     };
     onAddLead(newLead);
     setForm({name:"",canal:"WhatsApp",phone:"",email:"",notes:"",origem:""});
