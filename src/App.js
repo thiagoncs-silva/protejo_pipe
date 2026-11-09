@@ -155,14 +155,14 @@ const leadToDb = (l) => ({
   origem: l.origem||"",
   score: l.score||0,
   status: l.status||"Novo cliente",
-  funil_stage: l.funilStage||"f1",
+  funil_stage: l.funilStage||null,  // nunca sobrescrever com fallback errado — null é seguro
   priority: l.priority||"Média",
   notes: l.notes||"",
   channel: l.channel||l.canal||"Direto",
   description: l.description||"",
   business_hours: l.business_hours||"",
   tenant_id: l.tenant_id||null,
-  module: l.module||"prospeccao",
+  module: l.module||null,  // nunca forçar "prospeccao" — preserva receptivo/pos_venda
   responsible: l.responsible||null,
   responsible_id: l.responsible_id||null,
   meeting_at: l.meeting_at||null,
