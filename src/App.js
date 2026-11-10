@@ -1994,6 +1994,7 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
 
   // Carrega dados de pós-venda usando as MESMAS três fontes do módulo Pós-venda
   const normalizePvStatus = (s) => ({
+    "Enviando":        "Enviando",
     "Enviado":         "Enviado",
     "Em conversa":     "Respondeu",
     "Respondeu":       "Respondeu",
@@ -2040,6 +2041,7 @@ function Dashboard({leads, onSetPage, onAcionar, currentUser=null, isMaster=fals
     // mapeia status_envio (string do módulo) → id do PV_STAGES
     const map = {
       "Aguardando":      "aguardando",
+      "Enviando":        "enviando",
       "Enviado":         "enviado",
       "Respondeu":       "em_conversa",
       "Agendou reunião": "agendou",
@@ -7400,6 +7402,7 @@ function Suporte({ leads, onUpdateLead, currentUser }) {
 // v28: migrado para usar tabela `leads` com module='pos_venda' + lead_stages
 const PV_STAGES = [
   {id:"aguardando",   name:"Aguardando",          color:"#6B7280", icon:"⏳"},
+  {id:"enviando",     name:"Enviando",            color:"#F59E0B", icon:"📡"},
   {id:"enviado",      name:"Enviado",             color:"#3B82F6", icon:"📤"},
   {id:"em_conversa",  name:"Respondeu",           color:"#F59E0B", icon:"💬"},
   {id:"agendou",      name:"Agendou reunião",     color:"#10B981", icon:"📅"},
@@ -7422,7 +7425,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
   // Colunas expandidas no kanban — por padrão todas fechadas
   const initPvCols = () => {
     const agCols = ["ag_agenda_pendente","ag_agenda_erro","ag_agenda_processado"].reduce((acc,k)=>({...acc,[k]:true}),{});
-    const pvCols = ["Enviado","Respondeu","Agendou reunião","Proposta","Fechado","Sem resposta","Erro"].reduce((acc,s)=>({...acc,["pv_"+s]:true}),{});
+    const pvCols = ["Enviando","Enviado","Respondeu","Agendou reunião","Proposta","Fechado","Sem resposta","Erro"].reduce((acc,s)=>({...acc,["pv_"+s]:true}),{});
     return {...agCols,...pvCols};
   };
   const [expandedCols, setExpandedCols] = useState(initPvCols);
@@ -7467,6 +7470,8 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
       } else {
         await sbFetch("pos_venda?id=eq."+lead.id+"&tenant_id=eq."+tenantId, "PATCH", {
           vendedor: novoUsuario.full_name||novoUsuario.name||novoUsuario.email,
+          responsible: novoUsuario.full_name||novoUsuario.name||novoUsuario.email,
+          responsible_id: novoUsuario.id||null,
         });
       }
       setClientes(cs=>cs.map(c=>c.id===lead.id?{...c,
@@ -7540,6 +7545,32 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
         celular: r.celular||r.whatsapp||r.telefone||"",
         responsible_id: r.responsible_id||null,
       }));
+      // ── Auto-corrigir registros sem responsible_id mas com vendedor ─────────────
+      // Busca usuários do tenant uma vez e resolve pelo nome (compatível com "Guilherme" ou "Guilherme Schuenher")
+      try {
+        const semResponsavel = pvRows.filter(r=>!r.responsible_id && r.vendedor);
+        if(semResponsavel.length > 0){
+          const usuarios = await sbFetch("users?tenant_id=eq."+tenantId+"&select=id,name,full_name");
+          if(Array.isArray(usuarios) && usuarios.length > 0){
+            await Promise.all(semResponsavel.map(async r=>{
+              const v = (r.vendedor||"").toLowerCase().trim();
+              const match = usuarios.find(u=>{
+                const n = ((u.full_name||u.name||"")).toLowerCase().trim();
+                return n===v || n.startsWith(v+" ") || n.startsWith(v) || v.startsWith(n);
+              });
+              if(match){
+                await sbFetch("pos_venda?id=eq."+r.id+"&tenant_id=eq."+tenantId,"PATCH",{
+                  responsible: match.full_name||match.name,
+                  responsible_id: match.id,
+                }).catch(()=>{}); // silencioso — não bloqueia o carregamento
+                r.responsible_id = match.id;
+                r.responsible = match.full_name||match.name;
+              }
+            }));
+          }
+        }
+      } catch(e){ /* silencioso */ }
+
       // Deduplicar agenda: remove telefones que já existem em pos_venda
       const pvPhones = new Set(pvRows.map(r=>r.celular||"").filter(Boolean));
       const agendaFiltrada = agendaRows.filter(a=>{
@@ -7712,10 +7743,14 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
   // Filtra por responsible_id (uuid) OU por vendedor (nome) para compatibilidade com FK de auth.users
   const clientesVisiveis = canManagePv && verTodosPv
     ? clientes // ver todos (inclui sem responsável)
-    : clientes.filter(c=>
-        c.responsible_id===currentUser?.id ||
-        (c.vendedor&&currentUser?.name&&c.vendedor.toLowerCase()===currentUser.name.toLowerCase())
-      ); // só os meus
+    : clientes.filter(c=>{
+        if(c.responsible_id===currentUser?.id) return true;
+        if(!c.vendedor||!currentUser?.name) return false;
+        const v=c.vendedor.toLowerCase().trim();
+        const u=currentUser.name.toLowerCase().trim();
+        // comparação exata, OU vendedor é prefixo do nome completo (ex: "guilherme" ⊂ "guilherme schuenher")
+        return v===u || u.startsWith(v+" ") || u.startsWith(v) || v.startsWith(u);
+      }); // só os meus
   const filtered = clientesVisiveis.filter(c=>{
     const matchFiltro = filtro==="todos" ? true : (c.status_envio||"Aguardando")===filtro;
     const matchBusca = !busca || (()=>{
@@ -7736,8 +7771,8 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
   const txResposta  = enviados>0?Math.round((responderam/enviados)*100):0;
 
   // Todos os status possíveis — agenda + pos_venda
-  const PV_STATUS = ["Aguardando","Erro","Agendado","Enviado","Respondeu","Agendou reunião","Proposta","Fechado","Sem resposta"];
-  const PV_STATUS_EDITAVEIS = ["Enviado","Respondeu","Agendou reunião","Proposta","Fechado","Sem resposta","Erro"]; // pos_venda — Erro = falha no acionamento
+  const PV_STATUS = ["Aguardando","Erro","Agendado","Enviando","Enviado","Respondeu","Agendou reunião","Proposta","Fechado","Sem resposta"];
+  const PV_STATUS_EDITAVEIS = ["Enviando","Enviado","Respondeu","Agendou reunião","Proposta","Fechado","Sem resposta","Erro"]; // pos_venda — Erro = falha no acionamento
   const FILTROS = [
     {id:"todos", label:"Todos", count:total},
     ...PV_STATUS.map(s=>({id:s,label:s,count:clientes.filter(c=>(c.status_envio||"Aguardando")===s).length})),
@@ -7745,8 +7780,8 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
 
   // Metadados visuais de cada status
   const pvMeta = (st) => ({
-    color: st==="Aguardando"?"#6B7280":st==="Erro"?"#EF4444":st==="Agendado"?"#8B5CF6":st==="Enviado"?"#3B82F6":st==="Respondeu"?"#F59E0B":st==="Agendou reunião"?"#10B981":st==="Proposta"?"#A78BFA":st==="Fechado"?"#4ADE80":"#F87171",
-    icon:  st==="Aguardando"?"⏳":st==="Erro"?"⚠️":st==="Agendado"?"🕐":st==="Enviado"?"📤":st==="Respondeu"?"💬":st==="Agendou reunião"?"📅":st==="Proposta"?"📋":st==="Fechado"?"✅":"🔕",
+    color: st==="Aguardando"?"#6B7280":st==="Erro"?"#EF4444":st==="Agendado"?"#8B5CF6":st==="Enviando"?"#F59E0B":st==="Enviado"?"#3B82F6":st==="Respondeu"?"#10B981":st==="Agendou reunião"?"#06B6D4":st==="Proposta"?"#A78BFA":st==="Fechado"?"#4ADE80":"#F87171",
+    icon:  st==="Aguardando"?"⏳":st==="Erro"?"⚠️":st==="Agendado"?"🕐":st==="Enviando"?"📡":st==="Enviado"?"📤":st==="Respondeu"?"💬":st==="Agendou reunião"?"📅":st==="Proposta"?"📋":st==="Fechado"?"✅":"🔕",
   });
 
   // ── Funil kanban — agrupa por status_envio (inclui Agendado e Erro da agenda) ─
@@ -8030,8 +8065,8 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
               :<div style={card({padding:0,overflow:"hidden"})}>
                 {filtered.map((c,i)=>{
                   const st = c.status_envio||"Aguardando";
-                  const stColor = st==="Aguardando"?"#6B7280":st==="Erro"?"#EF4444":st==="Agendado"?"#8B5CF6":st==="Enviado"?"#3B82F6":st==="Respondeu"?"#F59E0B":st==="Agendou reunião"?"#10B981":"#F87171";
-                  const stIcon  = st==="Aguardando"?"⏳":st==="Erro"?"⚠️":st==="Agendado"?"🕐":st==="Enviado"?"📤":st==="Respondeu"?"💬":st==="Agendou reunião"?"📅":"🔕";
+                  const stColor = st==="Aguardando"?"#6B7280":st==="Erro"?"#EF4444":st==="Agendado"?"#8B5CF6":st==="Enviando"?"#F59E0B":st==="Enviado"?"#3B82F6":st==="Respondeu"?"#10B981":st==="Agendou reunião"?"#06B6D4":"#F87171";
+                  const stIcon  = st==="Aguardando"?"⏳":st==="Erro"?"⚠️":st==="Agendado"?"🕐":st==="Enviando"?"📡":st==="Enviado"?"📤":st==="Respondeu"?"💬":st==="Agendou reunião"?"📅":"🔕";
                   // Formata data_cadastro (timestamptz) → data e hora legíveis
                   const dtCad = c.data_cadastro ? new Date(c.data_cadastro) : null;
                   const dtCadStr = dtCad
@@ -8221,7 +8256,9 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
                       nome: showAgForm.nome,
                       telefone: showAgForm.celular||showAgForm.whatsapp||"",
                       cpf_cnpj: showAgForm.cpf_cnpj||null,
-                      vendedor: showAgForm.vendedor||null,
+                      vendedor: showAgForm.vendedor||currentUser?.name||null,
+                      responsible: currentUser?.name||null,
+                      responsible_id: currentUser?.id||null,
                       data_agendamento: dataAg,
                       status: "pendente",
                       created_at: new Date().toISOString(),
