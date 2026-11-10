@@ -7590,7 +7590,7 @@ function PosVenda({ currentUser, notify=(msg)=>alert(msg) }) {
 
   // ── Atualizar status ──────────────────────────────────────────────────────────
   const updateStatus = async (lead, novoStatus, extraFields={}) => {
-    if(lead._source && lead._source!=="leads") return; // agenda_pendente/erro não editáveis
+    if(lead._source==="agenda_pendente"||lead._source==="agenda_erro"||lead._source==="agenda_processado") return; // agenda não editável via kanban
     // Se moveu para "Agendou reunião" manualmente → abre modal para capturar data/responsável
     if(novoStatus==="Agendou reunião" && !extraFields._skipModal){
       setMeetingModal({lead});
